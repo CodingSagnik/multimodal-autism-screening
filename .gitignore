@@ -1,0 +1,95 @@
+# ==============================================================================
+# Byte-compiled / Optimized / Binary Files
+# ==============================================================================
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+*.dll
+*.dylib
+
+# ==============================================================================
+# Distribution / Packaging / Build Artifacts
+# ==============================================================================
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# ==============================================================================
+# Virtual Environments (Conda / venv)
+# ==============================================================================
+venv/
+.venv/
+env/
+.env
+ENV/
+env.bak/
+venv.bak/
+conda-meta/
+.conda/
+
+# ==============================================================================
+# IDEs, Editors & Workspace Configurations
+# ==============================================================================
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+Thumbs.db
+desktop.ini
+.gemini/
+.agents/
+.cursor/
+
+# ==============================================================================
+# Jupyter Notebooks & Profilers
+# ==============================================================================
+.ipynb_checkpoints
+*/.ipynb_checkpoints/*
+profile_default/
+ipython_config.py
+
+# ==============================================================================
+# Pretrained Weights, Task Bundles & Model Checkpoints
+# ==============================================================================
+checkpoints/
+*.pth
+*.bin
+*.onnx
+*.engine
+models/*
+!models/.gitkeep
+
+# ==============================================================================
+# Heavy Datasets & Processed Tensors (Exclude all large data except .gitkeep)
+# ==============================================================================
+# Raw Video, Audio, and Text Data
+data/raw/*
+!data/raw/**/.gitkeep
+!data/raw/.gitkeep
+
+# Processed Landmark Arrays, MFCC Tensors, and Text Embeddings
+data/processed/*
+!data/processed/**/.gitkeep
+!data/processed/.gitkeep
+
+# Logs, Diagnostics & Temp Folders
+*.log
+logs/
+scratch/
+tmp/
+temp/

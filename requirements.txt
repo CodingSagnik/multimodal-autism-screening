@@ -1,0 +1,34 @@
+# Deep Learning Framework
+torch
+torchvision
+torchaudio
+
+# Computer Vision & Landmark Extraction
+opencv-python
+mediapipe
+
+# Audio Processing & Feature Extraction
+librosa
+soundfile
+
+# NLP & Embeddings
+transformers
+tokenizers
+accelerate
+
+# Data Manipulation & Scientific Computing
+numpy
+pandas
+scipy
+scikit-learn
+
+# Model Explainability & Interpretability
+shap
+lime
+
+# Utilities & Visualization
+tqdm
+matplotlib
+seaborn
+jupyter
+ipykernel
