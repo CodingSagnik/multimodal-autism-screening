@@ -1,0 +1,24 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "early-autism-screening"
+version = "0.2.0"
+description = "Multimodal Deep Learning Architecture for Early Autism Spectrum Disorder (ASD) Screening"
+readme = "README.md"
+requires-python = ">=3.9"
+dependencies = [
+    "torch>=2.0.0",
+    "torchvision",
+    "numpy",
+    "pandas",
+    "scipy",
+    "scikit-learn",
+    "transformers",
+    "tqdm",
+]
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["src*"]

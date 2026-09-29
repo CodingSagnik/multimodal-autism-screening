@@ -10,13 +10,15 @@
 
 ## 1. Project Overview
 
-This repository houses the research codebase for **Multimodal Early Autism Screening**, an advanced machine learning framework designed for pediatric behavioral screening. The system integrates three synchronized physiological and behavioral streams:
+This repository houses the research codebase for **Multimodal Early Autism Screening**, an advanced machine learning framework designed for pediatric behavioral screening. The system integrates synchronized physiological, behavioral, and clinical streams:
 
-- **Computer Vision (Video)**: Extracts 3D spatial dynamics of facial landmarks focused on eye gaze, joint attention, and facial affect using **MediaPipe Face Mesh**.
-- **Acoustic Signal Processing (Audio)**: Analyzes pediatric vocalizations and prosodic speech patterns through standardized **Mel-Frequency Cepstral Coefficients (MFCCs)**.
-- **Clinical Natural Language Processing (Text)**: Encodes structured clinical narratives from the **M-CHAT-R (Modified Checklist for Autism in Toddlers, Revised)** questionnaire into high-dimensional semantic representations using **DistilBERT / ClinicalBERT**.
+- **Computer Vision (Video)**: Extracts 3D spatial dynamics of facial landmarks focused on eye gaze, joint attention, and facial affect using **MediaPipe Face Mesh**, with **temporal attention padding masks** to handle variable-length sequences.
+- **Acoustic Signal Processing (Audio)**: Analyzes pediatric vocalizations and prosodic speech patterns through standardized **Mel-Frequency Cepstral Coefficients (MFCCs)** via 2D Convolutional neural networks.
+- **Clinical Natural Language Processing (Text)**: Encodes standardized, label-agnostic clinical observation recording metadata using **DistilBERT**, strictly eliminating diagnostic data leakage.
 
-By capturing cross-modal correlations, the framework provides an objective, computational paradigm for early pediatric neurodevelopmental risk assessment.
+The architecture operates in **dual-mode**:
+- **3-Modality Screening**: Vision (128D) + Audio (128D) + Text (64D) $\rightarrow$ **320D** Fused Feature Space.
+- **2-Modality Screening**: Vision (128D) + Audio (128D) $\rightarrow$ **256D** Fused Feature Space.
 
 ```
                   ┌────────────────────────────────────────────────────────┐
@@ -25,8 +27,8 @@ By capturing cross-modal correlations, the framework provides an objective, comp
                           │                   │                   │
                           ▼                   ▼                   ▼
                   ┌───────────────┐   ┌───────────────┐   ┌───────────────┐
-                  │ Pediatric     │   │ Audio Clips   │   │ M-CHAT-R      │
-                  │ Videos (.mp4) │   │ (.wav)        │   │ Questionnaires│
+                  │ Pediatric     │   │ Audio Clips   │   │ Standardized  │
+                  │ Videos (.mp4) │   │ (.wav)        │   │ Narratives    │
                   └───────┬───────┘   └───────┬───────┘   └───────┬───────┘
                           │                   │                   │
     [Phase 1]             ▼ (5.0 FPS)         ▼ (16 kHz, 10s)     ▼ (Tokenizer)
@@ -40,149 +42,130 @@ By capturing cross-modal correlations, the framework provides an objective, comp
                         ┌───────────────────────────────┐
                         │   MultimodalAutismDataset     │
                         │    (171 Aligned Samples)      │
+                        │  + Temporal Attention Masks   │
                         └───────────────┬───────────────┘
                                         │
     [Phase 2-3]                         ▼
     Downstream          ┌───────────────────────────────┐
     Modeling            │  Modular Feature Encoders     │
-    & Fusion            │   (Vision + Audio + Text)     │
+    & Fusion            │  (Vision + Audio + [Text])    │
                         └───────────────┬───────────────┘
                                         │
                                         ▼
                         ┌───────────────────────────────┐
-                        │   Late Fusion & GA Weights    │
-                        │   + XAI (SHAP & LIME)         │
+                        │ Late Fusion (320D or 256D)    │
+                        │   + Dynamic Modality Weights  │
+                        │   + XAI (SHAP & LIME) Hooks   │
                         └───────────────────────────────┘
 ```
 
 ---
 
-## 2. The Problem & Clinical Motivation
+## 2. Dataset Architecture & Leakage-Free Design
 
-Early diagnosis of Autism Spectrum Disorder (ASD) before age 3 is vital for optimizing long-term developmental outcomes. However, the post-COVID-19 landscape has introduced significant clinical ambiguity:
+The repository cleanly delineates two distinct datasets to avoid cross-cohort contamination and data leakage:
 
-- **Pandemic-Induced Environmental Delays**: Toddlers raised during lockdowns experienced prolonged social isolation, disrupted peer interactions, and reduced linguistic exposure due to caregiver masking. Consequently, many present with non-ASD speech delays and reduced joint attention.
-- **Diagnostic Bottlenecks**: Standard screening tools (e.g., M-CHAT questionnaires alone) suffer from high false-positive rates when evaluating environmentally isolated children, overwhelming specialized clinical triage.
-- **Our Proposed Solution**: Differentiating true neurodevelopmental ASD from environmental developmental delays by combining objective micro-behavioral video landmarks, acoustic prosodic features, and clinical narratives. Leveraging **Explainable AI (XAI)** enables clinicians to isolate feature attributions (e.g., separating auditory inattention from speech latency).
+### 1. AV-ASD Multimodal Benchmark (171 Aligned Clips)
+- **171 Aligned Tri-Stream Samples**: Exactly 171 video landmark sequences, 171 audio MFCC matrices, and 171 dense text embeddings with 1-to-1 sample correspondence.
+- **Leakage-Free Clinical Narratives**: Generated via `src/data_processing/generate_video_text_embeddings.py`. Text records describe objective clip recording metadata (timestamps, duration, screening protocol) with zero diagnostic symptom keywords or class-discriminatory phrasing. Verified through linear probes demonstrating baseline majority-class cross-validation accuracy ($0.830$).
+- **Temporal Attention Masking**: All video sequences pad/truncate to $T=50$ frames, generating a boolean `video_mask` (`True` for valid frames, `False` for padding) so zero-padding does not dilute attention pooling.
 
----
-
-## 3. Current Progress: Phase 1 (Complete)
-
-Phase 1 data ingestion, feature standardization, and multimodal synchronization are **100% complete**:
-
-| Modality | Raw Input Source | Preprocessing Method | Output Shape / Dimension | Status |
-| :--- | :--- | :--- | :--- | :--- |
-| **Video** | AV-ASD `.mp4` Clips | MediaPipe Face Mesh at 5.0 FPS (92 Social Engagement Landmarks: Eyes, Mouth, Eyebrows) | `[T, 92, 3]` / `[50, 92, 3]` (`.npy` / `.pt`) | **Complete** |
-| **Audio** | AV-ASD `.wav` Audio | Librosa Resampling (16 kHz), Fixed 10s Window (Padding/Truncation), 40 MFCCs | `[40, 313]` (`.npy` / `.pt`) | **Complete** |
-| **Text** | M-CHAT-R Responses | Clinical Narrative Synthesis, Casing Normalization, DistilBERT Pooled Embeddings | `[768]` (`.pt` / `.csv`) | **Complete** |
-| **Dataset** | Multi-Stream Merging | `MultimodalAutismDataset` with strict unaligned-sample dropping | **171 Aligned Samples** | **Complete** |
-
-### Verified Dataset Summary
-- Total video files processed: **171**
-- Total audio files processed: **172** (1 unaligned record successfully filtered out)
-- Total M-CHAT text records: **6,075** + per-clip behavioral narratives
-- Aligned multimodal dataset size: **171 1-to-1 matched multimodal samples**
+### 2. M-CHAT-R Standalone Clinical Cohort (6,075 Patients)
+- Located in `data/processed/mchat_standalone/` (`mchat_embedded.pt` and `mchat_embedded.csv`).
+- Evaluated as a standalone pediatric NLP/tabular baseline, completely decoupled from the AV-ASD video fusion pipeline.
 
 ---
 
-## 4. Research Roadmap
+## 3. Modular Architecture Summary (Phase 2)
 
-```
-├── Phase 1: Data Ingestion, Extraction & PyTorch Dataset Alignment  [✓ COMPLETED]
-├── Phase 2: Unimodal Modular Encoders & Late Fusion Integration      [✓ COMPLETED]
-├── Phase 3: Soft Computing (Genetic Algorithm) & Explainable AI     [PLANNED]
-└── Phase 4: Benchmark Evaluation & Conference Manuscript Drafting   [PLANNED]
-```
+| Component / Sub-Network | Architecture Description | Latent Representation | Trainable Parameters |
+| :--- | :--- | :--- | :---: |
+| **Vision Sub-Network** (`VisionLandmarkModel`) | Conv1d + 2-layer BiLSTM + Temporal Attention Pooling with sequence validity mask + LayerNorm | 128D Embedding | 330,113 |
+| **Audio Sub-Network** (`AcousticCNNModel`) | 3-stage 2D CNN Spectrogram Extractor + Adaptive Pooling + LayerNorm | 128D Embedding | 109,793 |
+| **Text Sub-Network** (`ClinicalTextMLP`) | 3-stage regularized LayerNorm MLP compressing DistilBERT embeddings | 64D Embedding | 238,977 |
+| **Late Fusion Head** (`MultimodalAutismClassifier`) | Multi-stage MLP with LayerNorm, dropout, and dynamic modality scaling | 320D $\rightarrow$ 1 Logit (3M) <br> 256D $\rightarrow$ 1 Logit (2M) | 45,569 |
+| **Total Model (3-Modality)** | End-to-end tri-stream classifier (Vision + Audio + Text) | 320D Fused Vector | **724,452** |
+| **Total Model (2-Modality)** | Dual-mode audiovisual classifier (Vision + Audio) | 256D Fused Vector | **477,283** |
 
-### Phase 2: Modular Architectures & Late Fusion Integration (Complete)
-- **Vision Sub-Network (`VisionLandmarkModel`)**: 1D Temporal Convolution (Conv1d) + 2-layer Bidirectional LSTM + Temporal Attention Pooling projecting 3D landmark trajectories to a 128-dimensional embedding.
-- **Audio Sub-Network (`AcousticCNNModel`)**: 3-stage 2D CNN with adaptive pooling over MFCC spectrograms extracting 128-dimensional acoustic representations.
-- **Text Sub-Network (`ClinicalTextMLP`)**: 3-stage regularized LayerNorm MLP compressing 768-dimensional DistilBERT clinical questionnaire embeddings into a 64-dimensional latent space.
-- **Late Fusion Network (`MultimodalAutismClassifier`)**: Concatenates unimodal representations into a 320-dimensional fused vector (128 + 128 + 64), passed through a multi-stage MLP classification head. Includes a modality weighting hook for Phase 3 Genetic Algorithms and sub-feature extraction for SHAP/LIME.
-
-### Phase 3: Soft Computing Optimization & Explainability (XAI)
-- **Genetic Algorithm (GA) Weight Optimization**: Employing evolutionary algorithms to optimize fusion layer weights and loss penalty coefficients, combating class imbalance.
-- **Model Interpretability (SHAP & LIME)**: Computing Shapley values and local surrogate models to highlight which behavioral modalities contributed to screening predictions, explicitly isolating environmental delay markers.
-
-### Phase 4: Empirical Evaluation & Manuscript Preparation
-- Stratified 5-Fold Cross-Validation, sensitivity, specificity, and Area Under the ROC Curve (AUC-ROC).
-- Ablation studies (Vision-only vs. Audio-only vs. Text-only vs. Multimodal Fusion).
-- Submission to top-tier health informatics / AI in medicine conference.
+### Robustness & Normalization
+All projection layers and the fusion classifier use **LayerNorm** rather than BatchNorm, guaranteeing seamless, error-free operation on single-sample inputs (`batch_size=1`) during both training and real-time clinical screening inference.
 
 ---
 
-## 5. Repository Structure
+## 4. Repository Structure
 
 ```
 early_autism_screening/
 ├── data/
-│   ├── raw/                           # Raw datasets (excluded from git)
-│   │   ├── video/                     # Raw .mp4 video clips
-│   │   ├── audio/                     # Raw .wav audio clips
-│   │   ├── text/                      # mchat_results.csv & clinical files
-│   │   └── AV-ASD_repo/               # AV-ASD annotations and metadata
-│   └── processed/                     # Standardized feature tensors (excluded)
-│       ├── video_landmarks/           # Extracted 3D landmark arrays (.npy/.pt)
-│       ├── audio_features/            # Standardized 40x313 MFCC matrices (.npy/.pt)
-│       └── text_embeddings/           # DistilBERT pooled embeddings (.pt/.csv)
-├── models/                            # MediaPipe models and saved weights (.task)
-├── notebooks/                         # Exploratory and diagnostic Jupyter notebooks
+│   ├── raw/                                 # Raw source data (excluded from git)
+│   │   ├── video/                           # Raw .mp4 video clips
+│   │   ├── audio/                           # Raw .wav audio clips
+│   │   ├── text/                            # Raw mchat_results.csv
+│   │   └── AV-ASD_repo/                     # AV-ASD annotations and metadata
+│   └── processed/                           # Aligned feature tensors (excluded)
+│       ├── video_landmarks/                 # 3D landmark arrays (.npy, 171 files)
+│       ├── audio_features/                  # Standardized 40x313 MFCC matrices (171 files)
+│       ├── text_embeddings/                 # Leak-free DistilBERT embeddings (171 files)
+│       └── mchat_standalone/                # Standalone M-CHAT cohort (6,075 records)
+├── models/                                  # Pre-trained models and detector assets
+├── notebooks/                               # Exploratory analysis notebooks
 ├── src/
 │   ├── data_processing/
-│   │   ├── __init__.py                # Package exports
-│   │   ├── extract_video_landmarks.py # MediaPipe 3D face mesh extractor
-│   │   ├── extract_audio_features.py  # Librosa 16kHz MFCC extractor
-│   │   ├── extract_text_embeddings.py # DistilBERT clinical text embedding pipeline
-│   │   └── multimodal_dataset.py      # Custom PyTorch Multimodal Dataset
-│   └── models/                        # Downstream neural architectures (Phase 2)
-│       ├── __init__.py                # Package exports
-│       ├── vision_model.py            # VisionLandmarkModel (BiLSTM + Attention)
-│       ├── audio_model.py             # AcousticCNNModel (3-stage 2D CNN)
-│       ├── text_model.py              # ClinicalTextMLP (Regularized MLP)
-│       └── fusion_model.py            # MultimodalAutismClassifier (Late Fusion)
-├── .gitignore                         # Comprehensive ignore rules
-├── requirements.txt                   # Project Python dependencies
-└── README.md                          # Project documentation
+│   │   ├── __init__.py                      # Package exports
+│   │   ├── extract_video_landmarks.py       # MediaPipe 3D face mesh extractor
+│   │   ├── extract_audio_features.py        # Librosa 16kHz MFCC extractor
+│   │   ├── extract_text_embeddings.py       # Standalone M-CHAT text pipeline
+│   │   ├── generate_video_text_embeddings.py# Leak-free video text narrative generator
+│   │   └── multimodal_dataset.py            # Dual-mode PyTorch Multimodal Dataset
+│   └── models/
+│       ├── __init__.py                      # Package exports
+│       ├── vision_model.py                  # VisionLandmarkModel (BiLSTM + Attention + Mask)
+│       ├── audio_model.py                   # AcousticCNNModel (3-stage 2D CNN)
+│       ├── text_model.py                    # ClinicalTextMLP (LayerNorm MLP)
+│       └── fusion_model.py                  # MultimodalAutismClassifier (Dual-mode Late Fusion)
+├── tests/
+│   ├── check_phase2.py                      # Integration audit script
+│   ├── check_fusion.py                      # Multimodal late fusion audit script
+│   ├── check_subnetwork.py                  # Unimodal branch verification audit
+│   └── test_leakage_free.py                 # Automated text leakage test suite
+├── pyproject.toml                           # Package configuration (pip install -e .)
+├── requirements.txt                         # Python dependencies
+└── README.md                                # Project documentation
 ```
 
 ---
 
-## 6. Setup & Installation
+## 5. Setup & Installation
 
-### 1. Conda Environment Setup
+### 1. Environment Setup
 ```powershell
-# Create Conda virtual environment with Python 3.10
+# Create Conda virtual environment
 conda create -n autism_screening python=3.10 -y
-
-# Activate the environment
 conda activate autism_screening
 
-# Install project dependencies
+# Install dependencies and editable project package
 pip install -r requirements.txt
+pip install -e .
 ```
 
-### 2. Running Preprocessing Pipelines
-
-Each pipeline is modular and can be executed independently:
-
+### 2. Running Data Generation & Verification
 ```powershell
-# 1. Extract 3D facial landmarks from video (5.0 FPS, 92 social landmarks)
-python src/data_processing/extract_video_landmarks.py
+# Generate leak-free clinical narratives and text embeddings for AV-ASD clips
+python src/data_processing/generate_video_text_embeddings.py
 
-# 2. Extract standardized MFCC audio matrices (16 kHz, 10s window, 40 coeffs)
-python src/data_processing/extract_audio_features.py
-
-# 3. Extract dense clinical text embeddings using DistilBERT
-python src/data_processing/extract_text_embeddings.py
-
-# 4. Verify multimodal alignment and test DataLoader batch iteration
+# Verify multimodal dataset alignment & temporal attention padding masks
 python src/data_processing/multimodal_dataset.py
+
+# Run the complete test suite
+python tests/test_leakage_free.py
+python tests/check_subnetwork.py
+python tests/check_fusion.py
+python tests/check_phase2.py
 ```
 
 ---
 
-## 7. Citation & Academic Inquiries
+## 6. Citation & Academic Inquiries
 
 If you find this research codebase useful in your work, please cite:
 

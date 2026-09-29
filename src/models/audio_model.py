@@ -99,7 +99,7 @@ class AcousticCNNModel(nn.Module):
         # ----------------------------------------------------------------------
         self.projector = nn.Sequential(
             nn.Linear(128, embedding_dim),
-            nn.BatchNorm1d(embedding_dim),
+            nn.LayerNorm(embedding_dim),
             nn.ReLU(inplace=True),
             nn.Dropout(p=dropout),
         )

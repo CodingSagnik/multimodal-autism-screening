@@ -167,7 +167,7 @@ class VisionLandmarkModel(nn.Module):
         # 4. Projection Layer (maps pooled representation to final embedding dimension)
         self.projector = nn.Sequential(
             nn.Linear(bilstm_out_dim, embedding_dim),
-            nn.BatchNorm1d(embedding_dim),
+            nn.LayerNorm(embedding_dim),
             nn.ReLU(inplace=True),
         )
 

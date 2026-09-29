@@ -1,16 +1,20 @@
 """
 multimodal_dataset.py
 
-Custom PyTorch Dataset class (MultimodalAutismDataset) to align and load three
-synchronized multimodal streams:
-1. 3D Facial Landmarks (Video)
+Custom PyTorch Dataset class (MultimodalAutismDataset) to align and load synchronized
+multimodal behavioral streams:
+1. 3D Facial Landmarks (Video) with explicit temporal boolean padding masks
 2. Standardized MFCCs (Audio)
-3. Dense Clinical Text Embeddings (Text)
+3. Dense Clinical Text Embeddings (Text, optional for dual-mode operation)
+
+Supports dual-mode execution:
+- 3-Modality (Video + Audio + Text)
+- 2-Modality (Video + Audio)
 """
 
 import logging
 from pathlib import Path
-from typing import Callable, Dict, List, Optional, Set, Tuple, Union
+from typing import Callable, Dict, List, Optional, Sequence, Set, Tuple, Union
 
 import numpy as np
 import pandas as pd
@@ -31,14 +35,16 @@ class MultimodalAutismDataset(Dataset):
     Custom PyTorch Dataset for Multimodal Early Autism Screening.
     Aligns video landmark sequences, audio MFCC features, and clinical text embeddings.
     Strictly drops unaligned or missing records to guarantee 1-to-1 sample correspondence.
+    Generates video padding masks for valid temporal attention pooling.
     """
 
     def __init__(
         self,
         video_dir: Union[str, Path] = Path("data/processed/video_landmarks"),
         audio_dir: Union[str, Path] = Path("data/processed/audio_features"),
-        text_dir: Union[str, Path] = Path("data/processed/text_embeddings"),
+        text_dir: Optional[Union[str, Path]] = Path("data/processed/text_embeddings"),
         labels_file: Optional[Union[str, Path]] = Path("data/raw/AV-ASD_repo/dataset/csvs/dataset.csv"),
+        modalities: Sequence[str] = ("video", "audio", "text"),
         max_video_frames: Optional[int] = 50,
         flatten_landmarks: bool = False,
         transform_video: Optional[Callable] = None,
@@ -51,15 +57,23 @@ class MultimodalAutismDataset(Dataset):
             audio_dir: Directory containing preprocessed audio MFCC files (.npy or .pt).
             text_dir: Directory containing preprocessed text embeddings (.npy, .pt, or dictionary).
             labels_file: Optional path to CSV containing ground-truth diagnostic labels.
+            modalities: Modalities to include. Defaults to ("video", "audio", "text").
+                        Can also be ("video", "audio") for 2-modality screening.
             max_video_frames: Optional fixed temporal length for video tensors (pads/truncates).
             flatten_landmarks: If True, flattens spatial landmark dims (T, N*3).
             transform_video: Optional transform/augmentation callable for video tensor.
             transform_audio: Optional transform/augmentation callable for audio tensor.
             transform_text: Optional transform/augmentation callable for text tensor.
         """
-        self.video_dir = Path(video_dir).resolve()
-        self.audio_dir = Path(audio_dir).resolve()
-        self.text_dir = Path(text_dir).resolve()
+        self.modalities = tuple(m.lower().strip() for m in modalities)
+        valid_mods = {"video", "audio", "text"}
+        for m in self.modalities:
+            if m not in valid_mods:
+                raise ValueError(f"Unknown modality: '{m}'. Supported: {valid_mods}")
+
+        self.video_dir = Path(video_dir).resolve() if "video" in self.modalities else None
+        self.audio_dir = Path(audio_dir).resolve() if "audio" in self.modalities else None
+        self.text_dir = Path(text_dir).resolve() if ("text" in self.modalities and text_dir) else None
         self.labels_file = Path(labels_file).resolve() if labels_file else None
         self.max_video_frames = max_video_frames
         self.flatten_landmarks = flatten_landmarks
@@ -67,28 +81,36 @@ class MultimodalAutismDataset(Dataset):
         self.transform_audio = transform_audio
         self.transform_text = transform_text
 
-        # Validate directory existence
+        # Validate directory existence for active modalities
         for d_name, d_path in [
             ("Video", self.video_dir),
             ("Audio", self.audio_dir),
             ("Text", self.text_dir),
         ]:
-            if not d_path.exists():
+            if d_path is not None and not d_path.exists():
                 raise FileNotFoundError(f"{d_name} directory not found: {d_path}")
 
-        # Index available files in each modality
-        self.video_files = self._scan_modality_files(self.video_dir)
-        self.audio_files = self._scan_modality_files(self.audio_dir)
-        self.text_files, self.text_dict_bank = self._scan_text_modality(self.text_dir)
+        # Index available files in active modalities
+        self.video_files: Dict[str, Path] = {}
+        self.audio_files: Dict[str, Path] = {}
+        self.text_files: Dict[str, Path] = {}
+        self.text_dict_bank: Dict[str, torch.Tensor] = {}
+
+        if "video" in self.modalities and self.video_dir:
+            self.video_files = self._scan_modality_files(self.video_dir)
+        if "audio" in self.modalities and self.audio_dir:
+            self.audio_files = self._scan_modality_files(self.audio_dir)
+        if "text" in self.modalities and self.text_dir:
+            self.text_files, self.text_dict_bank = self._scan_text_modality(self.text_dir)
 
         # Load labels mapping
         self.labels_map = self._load_labels_map(self.labels_file)
 
-        # Compute strict intersection across modalities
+        # Compute strict intersection across active modalities
         self.active_ids = self._align_modalities()
 
         logger.info(
-            f"Dataset alignment complete: {len(self.active_ids)} perfectly matched multimodal samples."
+            f"Dataset alignment complete: {len(self.active_ids)} samples aligned across modalities {self.modalities}."
         )
 
     def _scan_modality_files(self, directory: Path) -> Dict[str, Path]:
@@ -103,38 +125,38 @@ class MultimodalAutismDataset(Dataset):
         self, directory: Path
     ) -> Tuple[Dict[str, Path], Dict[str, torch.Tensor]]:
         """
-        Discovers text embeddings from individual files or serialized PyTorch dictionary banks.
+        Discovers text embeddings from individual files or monolithic serialized tensor bank.
+        Excludes legacy mchat_embedded.pt to prevent unaligned cross-dataset pollution.
         """
         text_files: Dict[str, Path] = {}
         text_dict_bank: Dict[str, torch.Tensor] = {}
 
         # 1. Check for individual .npy / .pt files
         for f in directory.iterdir():
-            if f.name in ["mchat_embedded.pt", "video_text_embeddings.pt"]:
+            if f.name in ["video_text_embeddings.pt", "video_text_narratives.csv", "mchat_embedded.pt"]:
                 continue
             if f.suffix.lower() in [".npy", ".pt"]:
                 text_files[f.stem] = f
 
         # 2. Check for monolithic dictionary banks (.pt)
-        for dict_file_name in ["video_text_embeddings.pt", "mchat_embedded.pt"]:
-            dict_path = directory / dict_file_name
-            if dict_path.exists():
-                try:
-                    loaded = torch.load(dict_path, weights_only=False)
-                    if isinstance(loaded, dict) and "patient_ids" in loaded and "embeddings" in loaded:
-                        p_ids = loaded["patient_ids"]
-                        embs = loaded["embeddings"]
-                        if isinstance(embs, np.ndarray):
-                            embs = torch.from_numpy(embs)
-                        for i, pid in enumerate(p_ids):
-                            text_dict_bank[str(pid)] = embs[i].float()
-                except Exception as e:
-                    logger.warning(f"Could not load dictionary bank from {dict_path}: {e}")
+        bank_path = directory / "video_text_embeddings.pt"
+        if bank_path.exists():
+            try:
+                loaded = torch.load(bank_path, weights_only=False)
+                if isinstance(loaded, dict) and "patient_ids" in loaded and "embeddings" in loaded:
+                    p_ids = loaded["patient_ids"]
+                    embs = loaded["embeddings"]
+                    if isinstance(embs, np.ndarray):
+                        embs = torch.from_numpy(embs)
+                    for i, pid in enumerate(p_ids):
+                        text_dict_bank[str(pid)] = embs[i].float()
+            except Exception as e:
+                logger.warning(f"Could not load dictionary bank from {bank_path}: {e}")
 
         return text_files, text_dict_bank
 
     def _load_labels_map(self, labels_path: Optional[Path]) -> Dict[str, int]:
-        """Loads binary or categorical clinical labels from metadata CSV."""
+        """Loads binary clinical labels from metadata CSV."""
         labels_map: Dict[str, int] = {}
         if labels_path and labels_path.exists():
             try:
@@ -152,7 +174,7 @@ class MultimodalAutismDataset(Dataset):
                         label = 0 if is_background or not has_symptoms else 1
                         labels_map[vid] = label
 
-                # Case 2: M-CHAT format with Class column
+                # Case 2: M-CHAT format with Class column (for standalone M-CHAT evaluation)
                 elif "Class" in df.columns:
                     id_col = "Patient_ID" if "Patient_ID" in df.columns else None
                     for idx, row in df.iterrows():
@@ -168,28 +190,45 @@ class MultimodalAutismDataset(Dataset):
 
     def _align_modalities(self) -> List[str]:
         """
-        Finds exact intersection of IDs present in video, audio, and text modalities.
-        Drops any sample missing one or more modalities.
+        Finds exact intersection of IDs present in active modalities.
+        Drops any sample missing one or more of the specified modalities.
         """
-        v_ids: Set[str] = set(self.video_files.keys())
-        a_ids: Set[str] = set(self.audio_files.keys())
-        t_ids: Set[str] = set(self.text_files.keys()).union(set(self.text_dict_bank.keys()))
+        id_sets: List[Set[str]] = []
+        counts: Dict[str, int] = {}
 
-        # Strict intersection across all 3 streams
-        common_ids = sorted(list(v_ids.intersection(a_ids).intersection(t_ids)))
+        if "video" in self.modalities:
+            v_set = set(self.video_files.keys())
+            id_sets.append(v_set)
+            counts["Video"] = len(v_set)
 
-        total_union = v_ids.union(a_ids).union(t_ids)
+        if "audio" in self.modalities:
+            a_set = set(self.audio_files.keys())
+            id_sets.append(a_set)
+            counts["Audio"] = len(a_set)
+
+        if "text" in self.modalities:
+            t_set = set(self.text_files.keys()).union(set(self.text_dict_bank.keys()))
+            id_sets.append(t_set)
+            counts["Text"] = len(t_set)
+
+        if not id_sets:
+            raise ValueError("No active modalities configured.")
+
+        # Strict intersection across active modalities
+        common_ids = sorted(list(set.intersection(*id_sets)))
+        total_union = set.union(*id_sets)
         dropped_count = len(total_union) - len(common_ids)
 
         if dropped_count > 0:
+            count_str = ", ".join(f"{k}: {v}" for k, v in counts.items())
             logger.info(
                 f"Unaligned Sample Filter: {dropped_count} incomplete samples dropped. "
-                f"(Video: {len(v_ids)}, Audio: {len(a_ids)}, Text: {len(t_ids)} -> Aligned: {len(common_ids)})"
+                f"({count_str} -> Aligned: {len(common_ids)})"
             )
 
         if not common_ids:
             raise ValueError(
-                "No overlapping samples found across video, audio, and text directories."
+                f"No overlapping samples found across configured modalities: {self.modalities}."
             )
 
         return common_ids
@@ -217,64 +256,74 @@ class MultimodalAutismDataset(Dataset):
         Returns:
             dict containing:
                 "video": torch.FloatTensor [T, num_landmarks, 3] or [T, num_landmarks*3]
+                "video_mask": torch.BoolTensor [T] (True for valid frames, False for padding)
                 "audio": torch.FloatTensor [n_mfcc, time_frames]
-                "text": torch.FloatTensor [embedding_dim]
+                "text": torch.FloatTensor [embedding_dim] (if 'text' in modalities)
                 "label": torch.LongTensor scalar
+                "sample_id": str
         """
         sample_id = self.active_ids[idx]
+        sample_dict: Dict[str, Union[torch.Tensor, str]] = {"sample_id": sample_id}
 
-        # 1. Load Video Landmarks
-        video_path = self.video_files[sample_id]
-        video_tensor = self._load_tensor(video_path)  # Shape: [T, N, 3]
-
-        # Optional temporal padding / truncation for batching
-        if self.max_video_frames is not None:
+        # 1. Load Video Landmarks & Generate Temporal Attention Padding Mask
+        if "video" in self.modalities:
+            video_path = self.video_files[sample_id]
+            video_tensor = self._load_tensor(video_path)  # Shape: [T, N, 3]
             t_len = video_tensor.shape[0]
-            if t_len > self.max_video_frames:
-                video_tensor = video_tensor[: self.max_video_frames]
-            elif t_len < self.max_video_frames:
-                pad_shape = (self.max_video_frames - t_len,) + video_tensor.shape[1:]
-                padding = torch.zeros(pad_shape, dtype=video_tensor.dtype)
-                video_tensor = torch.cat([video_tensor, padding], dim=0)
 
-        # Optional landmark spatial flattening: [T, N, 3] -> [T, N*3]
-        if self.flatten_landmarks and video_tensor.ndim == 3:
-            video_tensor = video_tensor.view(video_tensor.shape[0], -1)
+            if self.max_video_frames is not None:
+                if t_len >= self.max_video_frames:
+                    video_tensor = video_tensor[: self.max_video_frames]
+                    valid_len = self.max_video_frames
+                else:
+                    valid_len = t_len
+                    pad_shape = (self.max_video_frames - t_len,) + video_tensor.shape[1:]
+                    padding = torch.zeros(pad_shape, dtype=video_tensor.dtype)
+                    video_tensor = torch.cat([video_tensor, padding], dim=0)
+
+                video_mask = torch.zeros(self.max_video_frames, dtype=torch.bool)
+                video_mask[:valid_len] = True
+            else:
+                video_mask = torch.ones(t_len, dtype=torch.bool)
+
+            # Optional landmark spatial flattening: [T, N, 3] -> [T, N*3]
+            if self.flatten_landmarks and video_tensor.ndim == 3:
+                video_tensor = video_tensor.view(video_tensor.shape[0], -1)
+
+            if self.transform_video is not None:
+                video_tensor = self.transform_video(video_tensor)
+
+            sample_dict["video"] = video_tensor.float()
+            sample_dict["video_mask"] = video_mask.bool()
 
         # 2. Load Audio MFCCs
-        audio_path = self.audio_files[sample_id]
-        audio_tensor = self._load_tensor(audio_path)  # Shape: [n_mfcc, time_frames]
+        if "audio" in self.modalities:
+            audio_path = self.audio_files[sample_id]
+            audio_tensor = self._load_tensor(audio_path)  # Shape: [n_mfcc, time_frames]
+            if self.transform_audio is not None:
+                audio_tensor = self.transform_audio(audio_tensor)
+            sample_dict["audio"] = audio_tensor.float()
 
-        # 3. Load Text Embeddings
-        if sample_id in self.text_files:
-            text_tensor = self._load_tensor(self.text_files[sample_id])
-        elif sample_id in self.text_dict_bank:
-            text_tensor = self.text_dict_bank[sample_id]
-        else:
-            raise KeyError(f"Text embedding missing for aligned sample: {sample_id}")
+        # 3. Load Text Embeddings (if included)
+        if "text" in self.modalities:
+            if sample_id in self.text_files:
+                text_tensor = self._load_tensor(self.text_files[sample_id])
+            elif sample_id in self.text_dict_bank:
+                text_tensor = self.text_dict_bank[sample_id]
+            else:
+                raise KeyError(f"Text embedding missing for aligned sample: {sample_id}")
 
-        if text_tensor.ndim > 1:
-            text_tensor = text_tensor.squeeze()
+            if text_tensor.ndim > 1:
+                text_tensor = text_tensor.squeeze()
+            if self.transform_text is not None:
+                text_tensor = self.transform_text(text_tensor)
+            sample_dict["text"] = text_tensor.float()
 
         # 4. Load Clinical Label
         raw_label = self.labels_map.get(sample_id, 0)
-        label_tensor = torch.tensor(raw_label, dtype=torch.long)
+        sample_dict["label"] = torch.tensor(raw_label, dtype=torch.long)
 
-        # Apply optional transforms
-        if self.transform_video is not None:
-            video_tensor = self.transform_video(video_tensor)
-        if self.transform_audio is not None:
-            audio_tensor = self.transform_audio(audio_tensor)
-        if self.transform_text is not None:
-            text_tensor = self.transform_text(text_tensor)
-
-        return {
-            "video": video_tensor.float(),
-            "audio": audio_tensor.float(),
-            "text": text_tensor.float(),
-            "label": label_tensor,
-            "sample_id": sample_id,
-        }
+        return sample_dict
 
 
 # ==============================================================================
@@ -285,54 +334,55 @@ if __name__ == "__main__":
     print("Testing MultimodalAutismDataset Pipeline and DataLoader Iteration")
     print("=" * 70)
 
-    # Initialize Dataset with paths to preprocessed modalities
-    dataset = MultimodalAutismDataset(
+    # 1. Test 3-Modality Configuration (Video + Audio + Text)
+    print("\n--- Test 1: 3-Modality Configuration (Video + Audio + Text) ---")
+    dataset_3m = MultimodalAutismDataset(
         video_dir=Path("data/processed/video_landmarks"),
         audio_dir=Path("data/processed/audio_features"),
         text_dir=Path("data/processed/text_embeddings"),
         labels_file=Path("data/raw/AV-ASD_repo/dataset/csvs/dataset.csv"),
-        max_video_frames=50,  # Standardize temporal length for uniform batch tensor collation
+        modalities=("video", "audio", "text"),
+        max_video_frames=50,
         flatten_landmarks=False,
     )
+    print(f"[Dataset 3M] Total Aligned Samples: {len(dataset_3m)}")
 
-    print(f"\n[Dataset] Total Aligned Samples: {len(dataset)}")
+    loader_3m = DataLoader(dataset_3m, batch_size=4, shuffle=True)
+    batch_3m = next(iter(loader_3m))
 
-    # Instantiate PyTorch DataLoader
-    batch_size = 4
-    dataloader = DataLoader(
-        dataset,
-        batch_size=batch_size,
-        shuffle=True,
-        num_workers=0,  # Set to 0 for seamless execution on Windows
-        drop_last=False,
+    print(f"  • Video Tensor Shape      : {batch_3m['video'].shape} | Dtype: {batch_3m['video'].dtype}")
+    print(f"  • Video Mask Shape        : {batch_3m['video_mask'].shape} | Dtype: {batch_3m['video_mask'].dtype}")
+    print(f"  • Video Mask True Count   : {batch_3m['video_mask'].sum(dim=1).tolist()} / 50")
+    print(f"  • Audio Tensor Shape      : {batch_3m['audio'].shape} | Dtype: {batch_3m['audio'].dtype}")
+    print(f"  • Text Tensor Shape       : {batch_3m['text'].shape}  | Dtype: {batch_3m['text'].dtype}")
+    print(f"  • Label Tensor Shape      : {batch_3m['label'].shape} | Dtype: {batch_3m['label'].dtype}")
+
+    assert batch_3m["video"].dtype == torch.float32
+    assert batch_3m["video_mask"].dtype == torch.bool
+    assert batch_3m["audio"].dtype == torch.float32
+    assert batch_3m["text"].dtype == torch.float32
+    assert batch_3m["label"].dtype == torch.int64
+    print("  => 3-Modality Test: PASSED")
+
+    # 2. Test 2-Modality Configuration (Video + Audio)
+    print("\n--- Test 2: 2-Modality Configuration (Video + Audio) ---")
+    dataset_2m = MultimodalAutismDataset(
+        video_dir=Path("data/processed/video_landmarks"),
+        audio_dir=Path("data/processed/audio_features"),
+        labels_file=Path("data/raw/AV-ASD_repo/dataset/csvs/dataset.csv"),
+        modalities=("video", "audio"),
+        max_video_frames=50,
     )
+    print(f"[Dataset 2M] Total Aligned Samples: {len(dataset_2m)}")
 
-    print(f"[DataLoader] Initialized with batch size: {batch_size}")
-    print("[DataLoader] Iterating through first batch...\n")
+    loader_2m = DataLoader(dataset_2m, batch_size=4, shuffle=True)
+    batch_2m = next(iter(loader_2m))
 
-    # Fetch and verify first batch
-    for batch_idx, batch in enumerate(dataloader):
-        video_batch = batch["video"]
-        audio_batch = batch["audio"]
-        text_batch = batch["text"]
-        label_batch = batch["label"]
-        sample_ids = batch["sample_id"]
+    assert "text" not in batch_2m
+    assert "video_mask" in batch_2m
+    assert batch_2m["video"].shape == (4, 50, 92, 3)
+    assert batch_2m["video_mask"].shape == (4, 50)
+    assert batch_2m["audio"].shape == (4, 40, 313)
+    print("  => 2-Modality Test: PASSED")
 
-        print("-" * 50)
-        print(f"Batch Index: {batch_idx + 1}")
-        print(f"Sample IDs: {sample_ids}")
-        print(f"  • Video Tensor Shape : {video_batch.shape} | Dtype: {video_batch.dtype}")
-        print(f"  • Audio Tensor Shape : {audio_batch.shape} | Dtype: {audio_batch.dtype}")
-        print(f"  • Text Tensor Shape  : {text_batch.shape}  | Dtype: {text_batch.dtype}")
-        print(f"  • Label Tensor Shape : {label_batch.shape}        | Dtype: {label_batch.dtype}")
-        print(f"  • Labels Values      : {label_batch.tolist()}")
-        print("-" * 50)
-
-        # Assert correct PyTorch tensor dtypes
-        assert video_batch.dtype == torch.float32, "Video tensor must be float32"
-        assert audio_batch.dtype == torch.float32, "Audio tensor must be float32"
-        assert text_batch.dtype == torch.float32, "Text tensor must be float32"
-        assert label_batch.dtype == torch.int64, "Label tensor must be int64 (long)"
-        break
-
-    print("\nDataset test completed successfully! All modalities aligned and verified.")
+    print("\nAll MultimodalAutismDataset tests passed successfully!")

@@ -244,7 +244,7 @@ def extract_embeddings(
 
 def process_and_export_mchat_dataset(
     csv_path: Union[str, Path] = Path("data/raw/text/mchat_results.csv"),
-    output_path: Union[str, Path] = Path("data/processed/text_embeddings/mchat_embedded.pt"),
+    output_path: Union[str, Path] = Path("data/processed/mchat_standalone/mchat_embedded.pt"),
     model_name: str = "distilbert-base-uncased",
     batch_size: int = 64,
     max_length: int = 128,
@@ -325,8 +325,8 @@ if __name__ == "__main__":
     parser.add_argument(
         "--output_path",
         type=str,
-        default="data/processed/text_embeddings/mchat_embedded.pt",
-        help="Path to output serialized PyTorch file (default: data/processed/text_embeddings/mchat_embedded.pt)",
+        default="data/processed/mchat_standalone/mchat_embedded.pt",
+        help="Path to output serialized PyTorch file (default: data/processed/mchat_standalone/mchat_embedded.pt)",
     )
     parser.add_argument(
         "--model_name",
