@@ -20,6 +20,7 @@ from .extract_text_embeddings import (
 )
 from .generate_video_text_embeddings import (
     synthesize_clean_narrative,
+    transcribe_audio_clips,
     generate_and_save_video_text_embeddings,
 )
 from .multimodal_dataset import MultimodalAutismDataset
@@ -40,6 +41,7 @@ __all__ = [
     "extract_embeddings",
     "process_and_export_mchat_dataset",
     "synthesize_clean_narrative",
+    "transcribe_audio_clips",
     "generate_and_save_video_text_embeddings",
     "MultimodalAutismDataset",
 ]

@@ -325,6 +325,65 @@ class MultimodalAutismDataset(Dataset):
 
         return sample_dict
 
+    def compute_pos_weight(self) -> torch.Tensor:
+        """
+        Computes BCEWithLogitsLoss pos_weight to correct for class imbalance.
+
+        For binary classification where y=1 (ASD) is the majority class:
+            pos_weight = n_negative / n_positive
+
+        This down-weights the majority positive class so that the effective
+        loss contribution from each class is balanced:
+            Positive effective = n_pos * pos_weight = n_neg
+            Negative effective = n_neg * 1.0        = n_neg
+
+        Returns:
+            torch.Tensor: Scalar pos_weight for BCEWithLogitsLoss.
+        """
+        labels = [self.labels_map.get(sid, 0) for sid in self.active_ids]
+        n_pos = sum(labels)
+        n_neg = len(labels) - n_pos
+        if n_pos == 0 or n_neg == 0:
+            logger.warning("Single-class dataset detected. Returning pos_weight=1.0.")
+            return torch.tensor([1.0])
+        pos_weight = torch.tensor([n_neg / n_pos], dtype=torch.float32)
+        logger.info(
+            f"Class balance: {n_pos} positive (ASD), {n_neg} negative (Control). "
+            f"pos_weight={pos_weight.item():.4f}"
+        )
+        return pos_weight
+
+    def get_sampler_weights(self) -> torch.Tensor:
+        """
+        Computes per-sample weights for torch.utils.data.WeightedRandomSampler
+        to achieve class-balanced mini-batches during training.
+
+        Each sample receives weight inversely proportional to its class frequency:
+            w_i = N / (2 * N_class_i)
+
+        Usage:
+            sampler = WeightedRandomSampler(
+                weights=dataset.get_sampler_weights(),
+                num_samples=len(dataset),
+                replacement=True,
+            )
+            loader = DataLoader(dataset, batch_size=16, sampler=sampler)
+
+        Returns:
+            torch.Tensor: Per-sample weights of shape [len(dataset)].
+        """
+        labels = [self.labels_map.get(sid, 0) for sid in self.active_ids]
+        n_pos = sum(labels)
+        n_neg = len(labels) - n_pos
+        n_total = len(labels)
+        weight_pos = n_total / (2.0 * n_pos) if n_pos > 0 else 1.0
+        weight_neg = n_total / (2.0 * n_neg) if n_neg > 0 else 1.0
+        weights = torch.tensor(
+            [weight_pos if l == 1 else weight_neg for l in labels],
+            dtype=torch.float32,
+        )
+        return weights
+
 
 # ==============================================================================
 # Verification and Test Script

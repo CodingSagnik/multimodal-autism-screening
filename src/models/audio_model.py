@@ -7,10 +7,10 @@ in the Multimodal Early Autism Screening system (Phase 2).
 Architecture:
 1. Reshape: [B, 40, 313] -> [B, 1, 40, 313]
 2. 3-Stage 2D CNN:
-   - Block 1: Conv2d(1 -> 32) -> BatchNorm2d -> ReLU -> MaxPool2d(2, 2)
-   - Block 2: Conv2d(32 -> 64) -> BatchNorm2d -> ReLU -> MaxPool2d(2, 2)
-   - Block 3: Conv2d(64 -> 128) -> BatchNorm2d -> ReLU -> AdaptiveAvgPool2d(1, 1)
-3. Flatten & Projection: Linear(128, 128) -> BatchNorm1d -> ReLU -> Dropout(0.3)
+   - Block 1: Conv2d(1 -> 32) -> GroupNorm -> ReLU -> MaxPool2d(2, 2)
+   - Block 2: Conv2d(32 -> 64) -> GroupNorm -> ReLU -> MaxPool2d(2, 2)
+   - Block 3: Conv2d(64 -> 128) -> GroupNorm -> ReLU -> AdaptiveAvgPool2d(1, 1)
+3. Flatten & Projection: Linear(128, 128) -> LayerNorm -> ReLU -> Dropout(0.3)
 4. Optional Classification Head: Linear(128, 1) controlled by return_features flag
 """
 
@@ -55,7 +55,7 @@ class AcousticCNNModel(nn.Module):
                 padding=1,
                 bias=False,
             ),
-            nn.BatchNorm2d(32),
+            nn.GroupNorm(num_groups=32, num_channels=32),
             nn.ReLU(inplace=True),
             nn.MaxPool2d(kernel_size=(2, 2)),
         )
@@ -72,7 +72,7 @@ class AcousticCNNModel(nn.Module):
                 padding=1,
                 bias=False,
             ),
-            nn.BatchNorm2d(64),
+            nn.GroupNorm(num_groups=32, num_channels=64),
             nn.ReLU(inplace=True),
             nn.MaxPool2d(kernel_size=(2, 2)),
         )
@@ -89,7 +89,7 @@ class AcousticCNNModel(nn.Module):
                 padding=1,
                 bias=False,
             ),
-            nn.BatchNorm2d(128),
+            nn.GroupNorm(num_groups=32, num_channels=128),
             nn.ReLU(inplace=True),
             nn.AdaptiveAvgPool2d(output_size=(1, 1)),
         )

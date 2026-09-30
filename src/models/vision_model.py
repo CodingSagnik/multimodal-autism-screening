@@ -6,7 +6,7 @@ in the Multimodal Early Autism Screening system (Phase 2).
 
 Architecture:
 1. Spatial Flattening: [B, 50, 92, 3] -> [B, 50, 276]
-2. 1D Temporal Convolution: Conv1d -> BatchNorm1d -> ReLU -> Dropout(0.3)
+2. 1D Temporal Convolution: Conv1d -> GroupNorm -> ReLU -> Dropout(0.3)
 3. BiLSTM Temporal Modeling: 2-layer Bidirectional LSTM (hidden_size=64) -> [B, 50, 128]
 4. Temporal Attention Pooling: Collapses temporal dimension -> [B, 128]
 5. Linear Projection: Linear(128, 128)
@@ -83,7 +83,7 @@ class TemporalConvBlock(nn.Module):
             padding=kernel_size // 2,  # preserves temporal sequence length
             bias=False,
         )
-        self.bn = nn.BatchNorm1d(out_channels)
+        self.bn = nn.GroupNorm(num_groups=min(32, out_channels), num_channels=out_channels)
         self.relu = nn.ReLU(inplace=True)
         self.dropout = nn.Dropout(p=dropout)
 

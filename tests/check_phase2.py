@@ -42,7 +42,8 @@ print(f"  • Total Trainable Parameters        : {count_params(model):>8,}")
 # 3. Forward Pass & Functional Hooks Check
 with torch.no_grad():
     logits, sub_feats = model(
-        batch['video'], batch['audio'], batch['text'], return_sub_features=True
+        batch['video'], batch['audio'], batch['text'],
+        video_mask=batch['video_mask'], return_sub_features=True
     )
 
 print(f"\n[3] FUNCTIONAL HOOKS CHECK")

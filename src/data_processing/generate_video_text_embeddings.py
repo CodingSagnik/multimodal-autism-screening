@@ -1,17 +1,17 @@
 """
 generate_video_text_embeddings.py
 
-Generates strictly leak-free, neutral clinical observation text narratives and dense
-embeddings for the AV-ASD multimodal dataset clips using a pre-trained Transformer
-(e.g., distilbert-base-uncased).
+Generates leak-free clinical observation text narratives and dense embeddings
+for the AV-ASD multimodal dataset clips using:
+1. Whisper ASR transcription of raw audio clips (speech/vocalization content)
+2. Dense DistilBERT pooled embeddings of the resulting clinical narratives
 
-CRITICAL AUDIT RESOLUTION (Issue 1, 3):
-- Prior embeddings encoded symptom descriptions and discriminatory context strings
-  ("natural unstructured" for background vs "structured observational" for ASD risk),
-  causing 100% data leakage into the text modality.
-- This script generates standardized, label-agnostic observational metadata text
-  based purely on video recording parameters (timestamps, duration, observation protocol).
-- Contains ZERO symptom tokens, ZERO diagnostic indicators, and ZERO class bias.
+CRITICAL AUDIT RESOLUTION (Issues 1, 3, R1):
+- Prior embeddings (v1) encoded symptom descriptions -> 100% data leakage.
+- Prior embeddings (v2) used timestamp-only metadata -> 0% discriminative signal.
+- This version (v3) uses Whisper ASR to extract genuine speech content from
+  the raw audio, providing real multimodal text signal with zero label leakage.
+- Falls back to metadata-only narratives when raw audio is unavailable.
 """
 
 import argparse
@@ -47,12 +47,92 @@ class ClinicalNarrativeDataset(Dataset):
         return self.texts[idx]
 
 
-def synthesize_clean_narrative(video_id: str) -> str:
+def transcribe_audio_clips(
+    raw_audio_dir: Path,
+    video_ids: List[str],
+    whisper_model: str = "openai/whisper-base",
+    language: str = "en",
+    device: Optional[str] = None,
+) -> Dict[str, str]:
     """
-    Synthesizes a standardized, label-agnostic clinical observation narrative
-    derived strictly from video recording identifiers and timestamps.
+    Transcribes raw audio clips using OpenAI Whisper ASR via HuggingFace pipeline.
 
-    No symptom descriptions, labels, or class-correlated phrasing are included.
+    This extracts genuine speech/vocalization content from the audio recordings,
+    providing authentic multimodal text signal without any label leakage.
+
+    Args:
+        raw_audio_dir: Directory containing raw audio files (.wav, .mp3, .flac).
+        video_ids: List of video clip identifiers to transcribe.
+        whisper_model: HuggingFace model identifier for Whisper ASR.
+        language: Target language for transcription (default: "en").
+        device: Compute device ("cuda" or "cpu"). Auto-detects if None.
+
+    Returns:
+        Dict mapping video_id -> transcription text.
+    """
+    if device is None:
+        device = "cuda" if torch.cuda.is_available() else "cpu"
+
+    try:
+        from transformers import pipeline as hf_pipeline
+    except ImportError:
+        raise ImportError("transformers is required for Whisper ASR.")
+
+    logger.info(f"Loading Whisper ASR model '{whisper_model}' on device '{device}'...")
+    device_arg = 0 if device == "cuda" else -1
+    asr = hf_pipeline(
+        "automatic-speech-recognition",
+        model=whisper_model,
+        device=device_arg,
+    )
+
+    audio_extensions = [".wav", ".mp3", ".flac", ".ogg", ".m4a"]
+    transcripts: Dict[str, str] = {}
+
+    logger.info(f"Transcribing {len(video_ids)} audio clips...")
+    for vid in tqdm(video_ids, desc="Whisper ASR Transcription"):
+        audio_file = None
+        for ext in audio_extensions:
+            candidate = raw_audio_dir / f"{vid}{ext}"
+            if candidate.exists():
+                audio_file = candidate
+                break
+
+        if audio_file is None:
+            logger.debug(f"No audio file found for '{vid}', skipping ASR.")
+            transcripts[vid] = ""
+            continue
+
+        try:
+            result = asr(
+                str(audio_file),
+                return_timestamps=True,
+                generate_kwargs={"language": language, "task": "transcribe"},
+            )
+            text = result.get("text", "").strip()
+            transcripts[vid] = text
+        except Exception as e:
+            logger.warning(f"ASR failed for '{vid}': {e}")
+            transcripts[vid] = ""
+
+    n_transcribed = sum(1 for t in transcripts.values() if t)
+    logger.info(
+        f"ASR complete: {n_transcribed}/{len(video_ids)} clips produced transcriptions."
+    )
+    return transcripts
+
+
+def synthesize_clean_narrative(
+    video_id: str,
+    transcript: str = "",
+) -> str:
+    """
+    Synthesizes a clinical observation narrative combining:
+    1. Neutral recording metadata (timestamps, duration)
+    2. Whisper ASR transcription of speech/vocalization content (if available)
+
+    No diagnostic labels, symptom descriptions, or class-discriminatory
+    phrasing are injected into the narrative.
     """
     parts = video_id.rsplit("_", 2)
     if len(parts) == 3:
@@ -67,13 +147,22 @@ def synthesize_clean_narrative(video_id: str) -> str:
         source_id = video_id
         start_sec, end_sec, duration = 0, 0, 0
 
-    narrative = (
-        f"standard pediatric behavioral observation clip {video_id}. "
-        f"video recording interval spans from second {start_sec} to second {end_sec} "
-        f"(total segment duration: {duration} seconds). "
-        f"session recorded under naturalistic behavioral screening protocol for developmental "
-        f"landmark tracking and acoustic evaluation."
-    )
+    clean_transcript = transcript.strip().lower() if transcript else ""
+
+    if clean_transcript:
+        narrative = (
+            f"pediatric behavioral screening clip {video_id}. "
+            f"recording interval from second {start_sec} to second {end_sec}, "
+            f"duration {duration} seconds. "
+            f"speech and vocalization transcript: {clean_transcript}"
+        )
+    else:
+        narrative = (
+            f"pediatric behavioral screening clip {video_id}. "
+            f"recording interval from second {start_sec} to second {end_sec}, "
+            f"duration {duration} seconds. "
+            f"no intelligible speech or vocalization detected in audio segment."
+        )
     return narrative
 
 
@@ -81,7 +170,7 @@ def extract_dense_embeddings(
     texts: List[str],
     model_name: str = "distilbert-base-uncased",
     batch_size: int = 32,
-    max_length: int = 128,
+    max_length: int = 256,
     pooling: str = "cls",
     device: Optional[str] = None,
 ) -> torch.Tensor:
@@ -130,17 +219,21 @@ def extract_dense_embeddings(
 
 def generate_and_save_video_text_embeddings(
     video_dir: Union[str, Path] = Path("data/processed/video_landmarks"),
+    raw_audio_dir: Optional[Union[str, Path]] = Path("data/raw/audio"),
     labels_file: Optional[Union[str, Path]] = Path("data/raw/AV-ASD_repo/dataset/csvs/dataset.csv"),
     output_dir: Union[str, Path] = Path("data/processed/text_embeddings"),
     model_name: str = "distilbert-base-uncased",
+    whisper_model: str = "openai/whisper-base",
+    language: str = "en",
     batch_size: int = 32,
-    max_length: int = 128,
+    max_length: int = 256,
     pooling: str = "cls",
+    skip_asr: bool = False,
 ) -> None:
     """
-    Full pipeline to generate leak-free clinical narratives, extract dense
-    Transformer embeddings, and save both individual .npy files and the
-    monolithic video_text_embeddings.pt tensor bank.
+    Full pipeline to generate leak-free clinical narratives with Whisper ASR
+    speech transcriptions, extract dense Transformer embeddings, and save
+    both individual .npy files and the monolithic video_text_embeddings.pt bank.
     """
     video_path = Path(video_dir).resolve()
     out_dir = Path(output_dir).resolve()
@@ -154,7 +247,7 @@ def generate_and_save_video_text_embeddings(
     video_ids = [f.stem for f in video_files]
     logger.info(f"Discovered {len(video_ids)} video clip IDs to process.")
 
-    # 2. Load ground-truth labels if available (for metadata dictionary, NOT in narratives)
+    # 2. Load ground-truth labels (for metadata dictionary ONLY, NOT used in narratives)
     labels_map: Dict[str, int] = {}
     if labels_file and Path(labels_file).exists():
         df_labels = pd.read_csv(labels_file)
@@ -168,20 +261,43 @@ def generate_and_save_video_text_embeddings(
 
     labels_list = [labels_map.get(vid, 0) for vid in video_ids]
 
-    # 3. Synthesize strictly leak-free narratives
-    narratives: List[str] = [synthesize_clean_narrative(vid) for vid in video_ids]
+    # 3. Transcribe audio clips with Whisper ASR (if raw audio is available)
+    transcripts: Dict[str, str] = {}
+    if not skip_asr and raw_audio_dir is not None:
+        audio_path = Path(raw_audio_dir).resolve()
+        if audio_path.exists() and audio_path.is_dir():
+            transcripts = transcribe_audio_clips(
+                raw_audio_dir=audio_path,
+                video_ids=video_ids,
+                whisper_model=whisper_model,
+                language=language,
+            )
+        else:
+            logger.warning(
+                f"Raw audio directory not found: {audio_path}. "
+                f"Falling back to metadata-only narratives (no ASR transcription)."
+            )
+    else:
+        logger.info("ASR transcription skipped. Using metadata-only narratives.")
+
+    # 4. Synthesize clinical narratives (with or without ASR transcription)
+    narratives: List[str] = [
+        synthesize_clean_narrative(vid, transcript=transcripts.get(vid, ""))
+        for vid in video_ids
+    ]
 
     # Save companion narratives CSV for inspection and auditing
     narratives_csv = out_dir / "video_text_narratives.csv"
     df_narratives = pd.DataFrame({
         "video_id": video_ids,
         "label": labels_list,
+        "has_transcript": [bool(transcripts.get(vid, "").strip()) for vid in video_ids],
         "narrative": narratives,
     })
     df_narratives.to_csv(narratives_csv, index=False)
-    logger.info(f"Saved clean audit narratives to {narratives_csv}")
+    logger.info(f"Saved clinical narratives to {narratives_csv}")
 
-    # 4. Extract Transformer embeddings
+    # 5. Extract Transformer embeddings
     embeddings = extract_dense_embeddings(
         texts=narratives,
         model_name=model_name,
@@ -190,14 +306,15 @@ def generate_and_save_video_text_embeddings(
         pooling=pooling,
     )  # [N, 768]
 
-    # 5. Save individual .npy files
+    # 6. Save individual .npy files
     logger.info(f"Saving individual .npy files to {out_dir}...")
     for idx, vid in enumerate(video_ids):
         emb_vec = embeddings[idx].numpy().astype(np.float32)
         np.save(out_dir / f"{vid}.npy", emb_vec)
 
-    # 6. Save monolithic serialized PyTorch dictionary
+    # 7. Save monolithic serialized PyTorch dictionary
     bank_path = out_dir / "video_text_embeddings.pt"
+    n_transcribed = sum(1 for t in transcripts.values() if t.strip()) if transcripts else 0
     bank_dict = {
         "patient_ids": video_ids,
         "embeddings": embeddings,
@@ -208,24 +325,33 @@ def generate_and_save_video_text_embeddings(
             "embedding_dim": str(embeddings.shape[1]),
             "num_samples": str(len(video_ids)),
             "pooling_method": pooling,
-            "leak_free_guarantee": "True - generated from neutral timestamp metadata only",
+            "asr_model": whisper_model if not skip_asr else "none",
+            "clips_with_transcript": str(n_transcribed),
+            "leak_free_guarantee": "True - narratives derived from ASR speech content and neutral metadata only",
         },
     }
     torch.save(bank_dict, bank_path)
     logger.info(
-        f"Successfully saved {len(video_ids)} leak-free text embeddings to {bank_path} (Tensor shape: {embeddings.shape})"
+        f"Successfully saved {len(video_ids)} text embeddings to {bank_path} "
+        f"(Tensor shape: {embeddings.shape}, ASR transcriptions: {n_transcribed}/{len(video_ids)})"
     )
 
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(
-        description="Generate leak-free clinical narratives and DistilBERT embeddings for AV-ASD video clips."
+        description="Generate leak-free clinical narratives with Whisper ASR and DistilBERT embeddings for AV-ASD video clips."
     )
     parser.add_argument(
         "--video_dir",
         type=str,
         default="data/processed/video_landmarks",
         help="Path to processed video landmarks directory",
+    )
+    parser.add_argument(
+        "--raw_audio_dir",
+        type=str,
+        default="data/raw/audio",
+        help="Path to raw audio clips directory for Whisper ASR transcription",
     )
     parser.add_argument(
         "--labels_file",
@@ -243,7 +369,19 @@ if __name__ == "__main__":
         "--model_name",
         type=str,
         default="distilbert-base-uncased",
-        help="Transformer model identifier",
+        help="Transformer model identifier for text embedding",
+    )
+    parser.add_argument(
+        "--whisper_model",
+        type=str,
+        default="openai/whisper-base",
+        help="Whisper ASR model identifier (default: openai/whisper-base)",
+    )
+    parser.add_argument(
+        "--language",
+        type=str,
+        default="en",
+        help="Target language for ASR transcription (default: en)",
     )
     parser.add_argument(
         "--batch_size",
@@ -252,20 +390,36 @@ if __name__ == "__main__":
         help="Batch size for inference",
     )
     parser.add_argument(
+        "--max_length",
+        type=int,
+        default=256,
+        help="Maximum token sequence length (default: 256, increased for ASR transcripts)",
+    )
+    parser.add_argument(
         "--pooling",
         type=str,
         default="cls",
         choices=["cls", "mean"],
         help="Pooling method",
     )
+    parser.add_argument(
+        "--skip_asr",
+        action="store_true",
+        help="Skip Whisper ASR transcription and use metadata-only narratives",
+    )
 
     args = parser.parse_args()
 
     generate_and_save_video_text_embeddings(
         video_dir=args.video_dir,
+        raw_audio_dir=args.raw_audio_dir,
         labels_file=args.labels_file,
         output_dir=args.output_dir,
         model_name=args.model_name,
+        whisper_model=args.whisper_model,
+        language=args.language,
         batch_size=args.batch_size,
+        max_length=args.max_length,
         pooling=args.pooling,
+        skip_asr=args.skip_asr,
     )
