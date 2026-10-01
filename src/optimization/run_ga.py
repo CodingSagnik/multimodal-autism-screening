@@ -230,6 +230,12 @@ def run_pipeline(
     # 5. Generate Evolution Plots
     logger.info("\nGenerating Evolution Visualizations...")
     plot_evolution_telemetry(log_dir / "evolution_log.csv", log_dir)
+    paper_fig_dir = Path("paper/figures")
+    if paper_fig_dir.exists():
+        plot_evolution_telemetry(log_dir / "evolution_log.csv", paper_fig_dir)
+        import shutil
+        if (paper_fig_dir / "fitness_curve.png").exists():
+            shutil.copy(paper_fig_dir / "fitness_curve.png", paper_fig_dir / "fig8_ga_convergence_curves.png")
     logger.info("Phase 3 GA Optimization Pipeline Complete!")
 
 

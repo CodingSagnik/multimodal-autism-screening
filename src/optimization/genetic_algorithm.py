@@ -321,6 +321,9 @@ class GeneticAlgorithmEngine:
         if resume_checkpoint:
             start_gen = self.load_checkpoint(resume_checkpoint) + 1
         else:
+            csv_path = self.log_dir / "evolution_log.csv"
+            if csv_path.exists():
+                csv_path.unlink()
             self.initialize_population()
 
         # Evaluate Generation 0/initial

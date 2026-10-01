@@ -101,7 +101,7 @@ class ResultsCompiler:
         angles = np.linspace(0, 2 * np.pi, n_metrics, endpoint=False).tolist()
         angles += angles[:1]
 
-        fig, ax = plt.subplots(figsize=(8, 8), subplot_kw=dict(polar=True), dpi=160)
+        fig, ax = plt.subplots(figsize=(8.5, 8.5), subplot_kw=dict(polar=True), dpi=180)
         ax.set_theta_offset(np.pi / 2)
         ax.set_theta_direction(-1)
 
@@ -110,16 +110,29 @@ class ResultsCompiler:
                 continue
             values = [data[model_name][k]["mean"] for k in metrics_keys]
             values += values[:1]
-            ax.plot(angles, values, linestyle=linestyle, linewidth=2, color=color, label=model_name.split("(")[0].strip())
+            ax.plot(angles, values, linestyle=linestyle, linewidth=2.2, color=color, label=model_name.split("(")[0].strip())
             ax.fill(angles, values, alpha=0.08, color=color)
 
-        ax.set_xticks(angles[:-1])
-        ax.set_xticklabels(labels, fontsize=9, fontweight="bold")
-        ax.set_ylim(0, 1.05)
+        ax.set_ylim(0, 1.15)
         ax.set_yticks([0.2, 0.4, 0.6, 0.8, 1.0])
-        ax.set_yticklabels(["0.2", "0.4", "0.6", "0.8", "1.0"], fontsize=8, alpha=0.7)
-        ax.set_title("Performance Profile Comparison:\nUnimodal vs. Multimodal Screening", fontsize=13, fontweight="bold", pad=30)
-        ax.legend(loc="lower right", bbox_to_anchor=(1.3, -0.05), fontsize=9)
+        ax.set_yticklabels(["0.2", "0.4", "0.6", "0.8", "1.0"], fontsize=8.5, alpha=0.7)
+        ax.set_xticks(angles[:-1])
+        ax.set_xticklabels([])  # Suppress default labels to place with perfect radial padding
+
+        # Position metric headings cleanly outside the circle boundary with generous padding
+        metric_placements = [
+            (angles[0], 1.18, "Balanced\nAccuracy", "center", "bottom"),
+            (angles[1], 1.22, "Macro\nF1", "left", "center"),
+            (angles[2], 1.24, "ROC-\nAUC", "left", "top"),
+            (angles[3], 1.18, "PR-\nAUC", "center", "top"),
+            (angles[4], 1.24, "Sensitivity\n(ASD)", "right", "top"),
+            (angles[5], 1.22, "Specificity\n(Control)", "right", "center"),
+        ]
+        for ang, r, text, ha, va in metric_placements:
+            ax.text(ang, r, text, ha=ha, va=va, fontsize=9.5, fontweight="bold", color="#1A202C")
+
+        ax.set_title("Performance Profile Comparison:\nUnimodal vs. Multimodal Screening", fontsize=13, fontweight="bold", pad=38)
+        ax.legend(loc="lower center", bbox_to_anchor=(0.5, -0.15), ncol=4, fontsize=9, framealpha=0.95, edgecolor="#CBD5E0")
         plt.tight_layout()
 
         output_path = self.paper_figures_dir / output_name
@@ -164,10 +177,15 @@ class ResultsCompiler:
         ax.set_ylabel("Score", fontsize=11, fontweight="bold")
         ax.set_title("Comprehensive Metric Comparison Across Model Configurations", fontsize=13, fontweight="bold")
         ax.set_xticks(x)
-        short_names = [n.replace("Unimodal ", "").replace("Late Fusion ", "").replace(" (3D Landmarks)", "\n(Vision)")
-                       .replace(" (Acoustic CNN)", "\n(Audio)").replace(" (Whisper ASR)", "\n(Text)")
-                       .replace("Bimodal ", "Bimodal\n").replace("Trimodal ", "Trimodal\n")
-                       for n in model_names]
+        label_clean_map = {
+            "Unimodal Vision (3D Landmarks)": "Unimodal Vision\n(3D Landmarks)",
+            "Unimodal Audio (Acoustic CNN)": "Unimodal Audio\n(Acoustic CNN)",
+            "Unimodal Text (Whisper ASR)": "Unimodal Text\n(Whisper ASR)",
+            "Bimodal Late Fusion (Vision + Audio)": "Bimodal\n(Vision + Audio)",
+            "Trimodal Late Fusion (Equal Weights)": "Trimodal\n(Equal Weights)",
+            "Trimodal Late Fusion (GA-Optimized)": "Trimodal\n(GA-Optimized)",
+        }
+        short_names = [label_clean_map.get(n, n) for n in model_names]
         ax.set_xticklabels(short_names, fontsize=8, ha="center")
         ax.set_ylim(0, 1.15)
         ax.legend(fontsize=9, ncol=3, loc="upper right")
@@ -188,18 +206,55 @@ class ResultsCompiler:
         self, output_name: str = "fig11_sensitivity_specificity_tradeoff.png"
     ) -> Path:
         """
-        Scatter plot showing the sensitivity vs. specificity tradeoff across models,
-        with marker size proportional to balanced accuracy.
+        Publication-ready scatter plot showing the sensitivity vs. specificity tradeoff
+        across models with clean legend positioning, uniform legend proxy markers,
+        and no label or marker overlapping.
         """
         data = self.load_model_comparison()
         if not data:
             return Path()
 
-        fig, ax = plt.subplots(figsize=(9, 7), dpi=160)
+        fig, ax = plt.subplots(figsize=(10, 7.5), dpi=200)
 
         model_names = list(data.keys())
-        colors = ["#2ca02c", "#ff7f0e", "#9467bd", "#e7298a", "#17becf", "#d62728"]
+        colors = ["#2B6CB0", "#DD6B20", "#805AD5", "#D53F8C", "#319795", "#C53030"]
         markers = ["o", "s", "^", "D", "P", "*"]
+
+        label_map = {
+            "Unimodal Vision (3D Landmarks)": "Unimodal Vision (3D Landmarks)",
+            "Unimodal Audio (Acoustic CNN)": "Unimodal Audio (Acoustic CNN)",
+            "Unimodal Text (Whisper ASR)": "Unimodal Text (Whisper ASR)",
+            "Bimodal Late Fusion (Vision + Audio)": "Bimodal Late Fusion (V + A)",
+            "Trimodal Late Fusion (Equal Weights)": "Trimodal Late Fusion (Equal Weights)",
+            "Trimodal Late Fusion (GA-Optimized)": "Trimodal Late Fusion (GA-Optimized)",
+        }
+
+        # 1. Iso-balanced-accuracy contours (clean dashed curves with non-colliding labels)
+        for ba in [0.5, 0.6, 0.7, 0.8]:
+            spec_range = np.linspace(0.0, 1.0, 100)
+            sens_contour = 2 * ba - spec_range
+            valid = (sens_contour >= 0.0) & (sens_contour <= 1.0)
+            if np.any(valid):
+                ax.plot(spec_range[valid], sens_contour[valid], ":", color="#A0AEC0", alpha=0.7, lw=1.2)
+                # Position label along the contour outside the legend box area
+                valid_specs = spec_range[valid]
+                valid_sens = sens_contour[valid]
+                # Filter points where spec >= 0.45 so text never collides with upper-left legend
+                outside_mask = (valid_specs >= 0.48) & (valid_sens <= 0.88)
+                if np.any(outside_mask):
+                    mid_idx = np.where(outside_mask)[0][len(np.where(outside_mask)[0]) // 2]
+                    ax.text(valid_specs[mid_idx], valid_sens[mid_idx],
+                            f" BA={ba:.1f} ", fontsize=8, color="#718096",
+                            rotation=-40, ha="center", va="center",
+                            bbox=dict(boxstyle="square,pad=0.1", facecolor="white", edgecolor="none", alpha=0.85))
+
+        # 2. Random classifier baseline
+        ax.plot([0, 1], [0, 1], "--", color="#CBD5E0", lw=1.5)
+
+        # 3. Plot models with error bars and build clean legend proxy handles
+        legend_handles = [
+            plt.Line2D([0], [0], linestyle="--", color="#CBD5E0", lw=1.5, label="Random Chance Baseline")
+        ]
 
         for i, model in enumerate(model_names):
             sens = data[model]["Sensitivity (ASD)"]["mean"]
@@ -208,36 +263,46 @@ class ResultsCompiler:
             sens_std = data[model]["Sensitivity (ASD)"]["std"]
             spec_std = data[model]["Specificity (Ctrl)"]["std"]
 
-            ax.errorbar(spec, sens, xerr=spec_std, yerr=sens_std,
-                       fmt=markers[i], color=colors[i], markersize=10 + bal_acc * 15,
-                       label=model.split("(")[0].strip(),
-                       capsize=4, alpha=0.85, markeredgecolor="black", markeredgewidth=0.8)
+            # Scatter with errorbar on axes
+            ax.errorbar(
+                spec, sens, xerr=spec_std, yerr=sens_std,
+                fmt=markers[i], color=colors[i], markersize=11 + bal_acc * 10,
+                capsize=5, capthick=1.2, elinewidth=1.4, alpha=0.9,
+                markeredgecolor="#1A202C", markeredgewidth=1.2, zorder=5
+            )
 
-        # Draw the random classifier diagonal
-        ax.plot([0, 1], [0, 1], "--", color="gray", alpha=0.5, label="Random Classifier")
+            # Uniform, perfectly spaced legend proxy marker (avoids oversized overlap)
+            proxy = plt.Line2D(
+                [0], [0], marker=markers[i], color="w",
+                markerfacecolor=colors[i], markeredgecolor="#1A202C", markeredgewidth=1.0,
+                markersize=9, label=f"{label_map.get(model, model)} (BA={bal_acc:.1%})"
+            )
+            legend_handles.append(proxy)
 
-        # Draw iso-balanced-accuracy contours
-        for ba in [0.5, 0.6, 0.7, 0.8]:
-            spec_range = np.linspace(0, 1, 100)
-            sens_contour = 2 * ba - spec_range
-            valid = (sens_contour >= 0) & (sens_contour <= 1)
-            ax.plot(spec_range[valid], sens_contour[valid], ":", color="lightgray", alpha=0.6)
-            midpoint = len(spec_range[valid]) // 2
-            if np.any(valid):
-                ax.text(spec_range[valid][midpoint], sens_contour[valid][midpoint],
-                       f"BA={ba:.1f}", fontsize=7, alpha=0.5, rotation=-45)
+        # Formatting
+        ax.set_xlabel("Clinical Specificity (Control Recall)", fontsize=12, fontweight="bold", color="#1A202C")
+        ax.set_ylabel("Clinical Sensitivity (ASD Recall)", fontsize=12, fontweight="bold", color="#1A202C")
+        ax.set_title("Sensitivity–Specificity Tradeoff Across Screening Model Architectures",
+                     fontsize=13.5, fontweight="bold", pad=15, color="#1A202C")
 
-        ax.set_xlabel("Specificity (Control Recall)", fontsize=11, fontweight="bold")
-        ax.set_ylabel("Sensitivity (ASD Recall)", fontsize=11, fontweight="bold")
-        ax.set_title("Sensitivity–Specificity Tradeoff Across Model Configurations", fontsize=13, fontweight="bold")
-        ax.set_xlim(-0.05, 1.1)
-        ax.set_ylim(-0.05, 1.1)
-        ax.legend(fontsize=8.5, loc="lower left")
-        ax.grid(True, alpha=0.3, linestyle="--")
+        ax.set_xlim(-0.02, 1.08)
+        ax.set_ylim(-0.02, 1.08)
+        ax.set_xticks(np.arange(0.0, 1.1, 0.2))
+        ax.set_yticks(np.arange(0.0, 1.1, 0.2))
+        ax.grid(True, alpha=0.35, linestyle="--", color="#CBD5E0")
+
+        # Elegant legend in the spacious upper-left quadrant
+        leg = ax.legend(
+            handles=legend_handles, loc="upper left", bbox_to_anchor=(0.02, 0.98),
+            fontsize=9, framealpha=0.95, facecolor="#F7FAFC", edgecolor="#CBD5E0",
+            title="Model Architectures (Ranked by Balanced Acc)", title_fontsize=9.5,
+            labelspacing=0.75, handletextpad=0.9, borderpad=0.8
+        )
+        leg.get_title().set_fontweight("bold")
+
         plt.tight_layout()
-
         output_path = self.paper_figures_dir / output_name
-        plt.savefig(output_path, bbox_inches="tight")
+        plt.savefig(str(output_path.resolve()), bbox_inches="tight")
         plt.close()
         print(f"[OK] Sensitivity-specificity tradeoff saved: {output_path}")
         return output_path

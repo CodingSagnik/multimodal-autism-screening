@@ -181,12 +181,16 @@ class PandemicContextAnalyzer:
         sorted_by_attn = sorted(valid_frames, key=lambda f: attn[f], reverse=True)
         selected_frames = sorted(sorted_by_attn[:max_frames])
 
-        # 2. Render Landmark Heatmap Frame Panel
-        fig, axes = plt.subplots(1, len(selected_frames), figsize=(4 * len(selected_frames), 4), dpi=150)
-        if len(selected_frames) == 1:
-            axes = [axes]
+        # 2. Render Landmark Heatmap Frame Panel with Dedicated GridSpec
+        n_frames = len(selected_frames)
+        fig = plt.figure(figsize=(4.2 * n_frames, 4.8), dpi=180)
+        # Dedicated 2-row grid: Row 0 for face panels, Row 1 for isolated colorbar
+        gs = fig.add_gridspec(2, n_frames, height_ratios=[1.0, 0.08], hspace=0.36)
+
+        axes = [fig.add_subplot(gs[0, i]) for i in range(n_frames)]
 
         landmarks = sample["video"].numpy()  # [50, 92, 3]
+        scatter = None
 
         for ax, frame_idx in zip(axes, selected_frames):
             frame_lm = landmarks[frame_idx]  # [92, 3]
@@ -204,8 +208,8 @@ class PandemicContextAnalyzer:
                 ys,
                 c=point_importance,
                 cmap="plasma",
-                s=28,
-                edgecolors="black",
+                s=32,
+                edgecolors="#1A202C",
                 linewidths=0.4,
                 alpha=0.9,
             )
@@ -214,23 +218,40 @@ class PandemicContextAnalyzer:
                 f"Frame {frame_idx:02d} (Attn: {frame_attn:.3f})",
                 fontsize=11,
                 fontweight="bold",
+                pad=8,
             )
-            ax.set_xlim(-0.05, 1.05)
-            ax.set_ylim(-0.05, 1.05)
+            # Dynamically zoom to the face bounding box with generous padding
+            valid_mask = (xs > 0.01) | (ys > 0.01)
+            if np.any(valid_mask):
+                vx = xs[valid_mask]
+                vy = ys[valid_mask]
+                x_span = max(vx.max() - vx.min(), 0.05)
+                y_span = max(vy.max() - vy.min(), 0.05)
+                pad_x = x_span * 0.16
+                pad_y = y_span * 0.20
+                ax.set_xlim(vx.min() - pad_x, vx.max() + pad_x)
+                ax.set_ylim(vy.min() - pad_y, vy.max() + pad_y)
+            else:
+                ax.set_xlim(-0.05, 1.05)
+                ax.set_ylim(-0.05, 1.05)
             ax.set_aspect("equal")
             ax.axis("off")
 
-        # Colorbar
-        cbar = fig.colorbar(scatter, ax=axes, orientation="horizontal", fraction=0.06, pad=0.12)
-        cbar.set_label("Spatio-Temporal Attention Energy", fontsize=10)
+        # Colorbar in dedicated sub-axis spanning the middle columns of row 1
+        col_start = max(0, n_frames // 4)
+        col_end = min(n_frames, n_frames - col_start)
+        cax = fig.add_subplot(gs[1, col_start:col_end])
+        cbar = fig.colorbar(scatter, cax=cax, orientation="horizontal")
+        cbar.set_label("Spatio-Temporal Attention Energy", fontsize=10.5, fontweight="bold", labelpad=6)
+        cbar.ax.tick_params(labelsize=9)
 
-        plt.suptitle(
+        fig.suptitle(
             f"Facial Landmark Attention Dynamics: Patient {sample_id}",
             fontsize=13,
             fontweight="bold",
+            y=0.98,
         )
-        plt.tight_layout()
-        plt.savefig(output_path)
+        plt.savefig(output_path, bbox_inches="tight")
         plt.close()
         return output_path
 
@@ -295,77 +316,137 @@ class PandemicContextAnalyzer:
         labels = [b["label"] for b in breakdown]
         preds = [b["prediction"] for b in breakdown]
 
-        plt.figure(figsize=(10, 7), dpi=160)
+        fig, ax = plt.subplots(figsize=(11, 7.5), dpi=180)
 
-        # Plot points grouped by diagnosis & prediction
+        # 1. Subtle region backgrounds
+        ax.axvspan(-0.04, sensitivity_threshold, color="#F8FAFC", alpha=0.7, zorder=0)
+        ax.axvspan(sensitivity_threshold, 1.02, color="#FEF2F2", alpha=0.45, zorder=0)
+
+        # 2. Plot points grouped by diagnosis & prediction
+        flagged_idx = None
         for i in range(len(breakdown)):
             is_asd_truth = labels[i] == 1
             is_pred_asd = preds[i] >= 0.5
+            is_flagged = is_pred_asd and (p_sens[i] >= sensitivity_threshold)
 
-            color = "#d73027" if is_asd_truth else "#4575b4"  # Red for ASD, Blue for Control
+            color = "#DC2626" if is_asd_truth else "#2563EB"  # Crimson for ASD, Royal Blue for Control
             marker = "o" if is_pred_asd else "^"  # Circle for pred ASD, Triangle for pred Control
-            size = 55 if not (is_pred_asd and p_sens[i] >= sensitivity_threshold) else 90
+            size = 65 if not is_flagged else 130
 
-            plt.scatter(
+            ax.scatter(
                 p_sens[i],
                 a_spec[i],
                 color=color,
                 marker=marker,
                 s=size,
-                alpha=0.75,
-                edgecolors="black" if (is_pred_asd and p_sens[i] >= sensitivity_threshold) else "none",
-                linewidths=1.2,
+                alpha=0.85,
+                edgecolors="#1A202C" if is_flagged else "white",
+                linewidths=1.8 if is_flagged else 0.8,
+                zorder=5 if is_flagged else 3,
+            )
+            if is_flagged:
+                flagged_idx = i
+
+        # 3. Add threshold guidelines
+        ax.axvline(
+            sensitivity_threshold,
+            color="#DC2626",
+            linestyle="--",
+            linewidth=1.8,
+            alpha=0.85,
+            zorder=2,
+        )
+        ax.axhline(0.30, color="#CBD5E0", linestyle=":", linewidth=1.2, alpha=0.7, zorder=1)
+
+        # 4. Annotation for flagged subject if present
+        if flagged_idx is not None:
+            sample_id = breakdown[flagged_idx]["sample_id"]
+            ax.annotate(
+                f"Flagged Subject ({sample_id})\nPotential Environmental Confound",
+                xy=(p_sens[flagged_idx], a_spec[flagged_idx]),
+                xytext=(p_sens[flagged_idx] + 0.08, a_spec[flagged_idx] + 0.06),
+                fontsize=8.5,
+                fontweight="bold",
+                color="#7F1D1D",
+                arrowprops=dict(arrowstyle="->", color="#DC2626", lw=1.5, connectionstyle="arc3,rad=-0.15"),
+                bbox=dict(boxstyle="round,pad=0.35", facecolor="#FEE2E2", edgecolor="#DC2626", lw=1.0),
+                zorder=6,
             )
 
-        # Add threshold guidelines and quadrant regions
-        plt.axvline(
-            sensitivity_threshold,
-            color="#e41a1c",
-            linestyle="--",
-            alpha=0.7,
-            label=f"Pandemic Sensitivity Threshold ({sensitivity_threshold:.2f})",
-        )
-        plt.axhline(0.30, color="gray", linestyle=":", alpha=0.5)
-
-        # Quadrant Annotations
-        plt.text(
-            0.05,
-            0.60,
-            "QUADRANT I\nCore Neurodevelopmental ASD\n(High ASD Specificity)",
-            fontsize=10,
-            color="#7f0000",
+        # Threshold line vertical badge
+        ax.text(
+            sensitivity_threshold + 0.015,
+            0.03,
+            f"Clinical Re-Evaluation Cutoff (τ = {sensitivity_threshold:.2f})",
+            rotation=90,
+            fontsize=8.5,
             fontweight="bold",
-            bbox=dict(boxstyle="round,pad=0.4", facecolor="#fee0d2", alpha=0.7),
-        )
-        plt.text(
-            max(p_sens) * 0.70,
-            0.60,
-            "QUADRANT II\nHigh Pandemic Confounding\n(Candidate Environmental Delays)",
-            fontsize=10,
-            color="#990000",
-            fontweight="bold",
-            bbox=dict(boxstyle="round,pad=0.4", facecolor="#ffeda0", alpha=0.8),
+            color="#DC2626",
+            va="bottom",
+            zorder=4,
         )
 
-        plt.title(
+        # 5. Clean Quadrant Banners (positioned comfortably at y = 0.63, well above highest point y ~ 0.58)
+        ax.text(
+            0.16,
+            0.63,
+            "QUADRANT I: Intrinsic ASD Biomarkers\n(High Specificity · Low Environmental Confounding)",
+            ha="center",
+            va="center",
+            fontsize=9.5,
+            fontweight="bold",
+            color="#991B1B",
+            bbox=dict(boxstyle="round,pad=0.45", facecolor="#FEE2E2", edgecolor="#F87171", lw=1.2, alpha=0.95),
+            zorder=4,
+        )
+        ax.text(
+            0.64,
+            0.63,
+            "QUADRANT II: Environmental Delay Drivers\n(High Pandemic Sensitivity · Flagged for Re-evaluation)",
+            ha="center",
+            va="center",
+            fontsize=9.5,
+            fontweight="bold",
+            color="#92400E",
+            bbox=dict(boxstyle="round,pad=0.45", facecolor="#FEF3C7", edgecolor="#FBBF24", lw=1.2, alpha=0.95),
+            zorder=4,
+        )
+
+        ax.set_xlim(-0.04, 0.96)
+        ax.set_ylim(-0.03, 0.70)
+        ax.set_xlabel("Pandemic Sensitivity Attribution Ratio (Environmental)", fontsize=11, fontweight="bold", labelpad=8)
+        ax.set_ylabel("ASD Specificity Attribution Ratio (Intrinsic Neurodevelopmental)", fontsize=11, fontweight="bold", labelpad=8)
+        ax.grid(True, linestyle="--", alpha=0.35, color="#CBD5E0", zorder=1)
+
+        # 6. Custom Legend positioned neatly above axes, spanning horizontally
+        from matplotlib.lines import Line2D
+        legend_elements = [
+            Line2D([0], [0], marker="o", color="w", label="Ground Truth: ASD (pred ASD)", markerfacecolor="#DC2626", markeredgecolor="#7F1D1D", markersize=9),
+            Line2D([0], [0], marker="^", color="w", label="Ground Truth: Control (pred Ctrl)", markerfacecolor="#2563EB", markeredgecolor="#1E40AF", markersize=9),
+            Line2D([0], [0], color="#DC2626", linestyle="--", lw=1.8, label=f"Re-Evaluation Threshold (τ={sensitivity_threshold:.2f})"),
+        ]
+        ax.legend(
+            handles=legend_elements,
+            loc="lower center",
+            bbox_to_anchor=(0.5, 1.01),
+            ncol=3,
+            fontsize=9.5,
+            frameon=True,
+            facecolor="#F8FAFC",
+            edgecolor="#CBD5E0",
+            borderpad=0.5,
+            handletextpad=0.6,
+            columnspacing=1.5,
+        )
+
+        fig.suptitle(
             "XAI Disentanglement: Pandemic-Induced Delays vs. Neurodevelopmental ASD Markers",
             fontsize=13,
             fontweight="bold",
+            y=0.99,
         )
-        plt.xlabel("Pandemic Sensitivity Attribution Ratio (Environmental)", fontsize=11)
-        plt.ylabel("ASD Specificity Attribution Ratio (Intrinsic Neurodevelopmental)", fontsize=11)
-        plt.grid(True, linestyle="--", alpha=0.5)
-
-        # Custom Legend
-        from matplotlib.lines import Line2D
-        legend_elements = [
-            Line2D([0], [0], marker="o", color="w", label="Ground Truth: ASD (pred ASD)", markerfacecolor="#d73027", markersize=9),
-            Line2D([0], [0], marker="^", color="w", label="Ground Truth: Control (pred Ctrl)", markerfacecolor="#4575b4", markersize=9),
-            Line2D([0], [0], color="#e41a1c", linestyle="--", label="Re-Evaluation Threshold"),
-        ]
-        plt.legend(handles=legend_elements, loc="upper right", fontsize=10)
         plt.tight_layout()
-        plt.savefig(output_path)
+        plt.savefig(output_path, bbox_inches="tight")
         plt.close()
         return output_path
 
