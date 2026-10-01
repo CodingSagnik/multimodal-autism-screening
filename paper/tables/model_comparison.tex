@@ -1,0 +1,18 @@
+\begin{table*}[t]
+\centering
+\caption{\textbf{Empirical Performance Comparison across Modality Configurations.} All models evaluated across 5-fold stratified cross-validation on the aligned AV-ASD cohort ($N=171$). Results reported as mean $\pm$ standard deviation. Bold indicates the highest performing model across each metric.}
+\label{tab:model_benchmark}
+\small
+\begin{tabular}{lcccccc}
+\toprule
+\textbf{Architecture Configuration} & \textbf{Bal. Acc $\uparrow$} & \textbf{Macro F1 $\uparrow$} & \textbf{ROC-AUC $\uparrow$} & \textbf{PR-AUC $\uparrow$} & \textbf{Sens. (ASD) $\uparrow$} & \textbf{Spec. (Ctrl) $\uparrow$} \\
+\midrule
+Unimodal Vision (3D Landmarks) & 0.658 ± 0.055 & 0.496 ± 0.058 & 0.709 ± 0.029 & 0.916 ± 0.022 & 0.457 ± 0.106 & 0.859 ± 0.100 \\
+Unimodal Audio (Acoustic CNN) & 0.756 ± 0.053 & 0.596 ± 0.064 & 0.865 ± 0.045 & 0.967 ± 0.016 & 0.578 ± 0.087 & 0.933 ± 0.094 \\
+Unimodal Text (Whisper ASR) & 0.507 ± 0.010 & 0.160 ± 0.025 & 0.716 ± 0.016 & 0.918 ± 0.021 & 0.014 ± 0.020 & 1.000 ± 0.000 \\
+Bimodal Late Fusion (Vision + Audio) & 0.579 ± 0.064 & 0.329 ± 0.127 & 0.680 ± 0.124 & 0.913 ± 0.031 & 0.225 ± 0.160 & 0.933 ± 0.094 \\
+Trimodal Late Fusion (Equal Weights) & 0.606 ± 0.098 & 0.384 ± 0.178 & 0.849 ± 0.055 & 0.958 ± 0.024 & 0.315 ± 0.240 & 0.896 ± 0.082 \\
+\textbf{Trimodal Late Fusion (GA-Optimized)} & \textbf{0.606 ± 0.098} & \textbf{0.384 ± 0.178} & \textbf{0.849 ± 0.055} & \textbf{0.958 ± 0.024} & \textbf{0.315 ± 0.240} & \textbf{0.896 ± 0.082} \\
+\bottomrule
+\end{tabular}
+\end{table*}

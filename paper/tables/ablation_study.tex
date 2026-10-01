@@ -1,0 +1,18 @@
+\begin{table}[t]
+\centering
+\caption{\textbf{Ablation Study: Modality Contribution Analysis.} Performance changes when adding/removing individual modalities. $\Delta$ BA shows difference from best unimodal baseline (Audio CNN).}
+\label{tab:ablation}
+\small
+\begin{tabular}{lccc|c}
+\toprule
+\textbf{Configuration} & \textbf{Bal. Acc $\uparrow$} & \textbf{Macro F1 $\uparrow$} & \textbf{ROC-AUC $\uparrow$} & \textbf{$\Delta$ BA} \\
+\midrule
+Unimodal Vision (3D Landmarks) & 0.658 ± 0.055 & 0.496 ± 0.058 & 0.709 ± 0.029 & -0.098 \\
+Unimodal Audio (Acoustic CNN) & 0.756 ± 0.053 & 0.596 ± 0.064 & 0.865 ± 0.045 & — \\
+Unimodal Text (Whisper ASR) & 0.507 ± 0.010 & 0.160 ± 0.025 & 0.716 ± 0.016 & -0.249 \\
+Bimodal Late Fusion (Vision + Audio) & 0.579 ± 0.064 & 0.329 ± 0.127 & 0.680 ± 0.124 & -0.177 \\
+Trimodal Late Fusion (Equal Weights) & 0.606 ± 0.098 & 0.384 ± 0.178 & 0.849 ± 0.055 & -0.150 \\
+Trimodal Late Fusion (GA-Optimized) & 0.606 ± 0.098 & 0.384 ± 0.178 & 0.849 ± 0.055 & -0.150 \\
+\bottomrule
+\end{tabular}
+\end{table}

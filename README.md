@@ -118,7 +118,25 @@ Phase 3 introduces technical novelty required for clinical conference submission
 
 ---
 
-## 5. Repository Structure
+## 5. Phase 4: Empirical Evaluation & Paper Drafting
+
+Phase 4 transitions the completed software project into a structured conference submission:
+
+### 1. Results Compilation (`src/evaluation/`)
+- **`ResultsCompiler`**: Automated generation of all publication-ready figures and tables from the cross-validation and GA optimization outputs.
+- **Radar Performance Profile**: Spider chart comparing unimodal vs. multimodal metric profiles across 6 evaluation dimensions.
+- **Grouped Metric Comparison**: Bar chart with error bars for all model × metric combinations.
+- **Sensitivity–Specificity Tradeoff**: Scatter plot with iso-balanced-accuracy contours showing the clinical tradeoff across configurations.
+- **Ablation Study Table**: LaTeX table quantifying the contribution of each modality relative to the best unimodal baseline.
+- **GA Hyperparameter Summary**: LaTeX table documenting the 9-gene search space and discovered optimal configuration.
+
+### 2. Conference Paper (`paper/main.tex`)
+- **IEEE/ACM Conference Format**: Full paper draft with Abstract, Introduction, Literature Review (20 references), Methodology (mathematical formulations for GA, SHAP, Pandemic Context Module), Experimental Results (6 figures, 3 tables), Discussion, and Conclusion.
+- **Key figures referenced**: Architecture pipeline diagram, SHAP modality attribution, LIME contrastive case study, pandemic disentanglement scatter, landmark attention heatmaps, acoustic spectrograms, GA convergence curves, radar comparison, grouped metrics, sensitivity-specificity tradeoff.
+
+---
+
+## 6. Repository Structure
 
 ```
 early_autism_screening/
@@ -137,6 +155,28 @@ early_autism_screening/
 │   ├── ga_checkpoints/                      # GA population checkpoints & final model
 │   └── ga_logs/                             # Evolution CSV logs & convergence plots
 ├── notebooks/                               # Exploratory analysis notebooks
+├── paper/                                   # Phase 4: Conference Paper & Publication Assets
+│   ├── main.tex                             # Full IEEE/ACM conference paper draft
+│   ├── figures/                             # Publication-ready figures (11 total)
+│   │   ├── fig1_multimodal_architecture_pipeline.png
+│   │   ├── fig2_modality_importance_shap.png
+│   │   ├── fig3_top_latent_features_shap.png
+│   │   ├── fig4_lime_contrastive_case_study.png
+│   │   ├── fig5_pandemic_disentanglement_scatter.png
+│   │   ├── fig6_video_landmark_attention_heatmaps.png
+│   │   ├── fig7_acoustic_attribution_spectrograms.png
+│   │   ├── fig8_ga_convergence_curves.png
+│   │   ├── fig9_radar_performance_profile.png
+│   │   ├── fig10_grouped_metric_comparison.png
+│   │   └── fig11_sensitivity_specificity_tradeoff.png
+│   └── tables/                              # LaTeX & Markdown data tables
+│       ├── model_comparison.tex             # Main benchmark table (6 models × 6 metrics)
+│       ├── ablation_study.tex               # Modality ablation with Δ balanced accuracy
+│       ├── ga_hyperparameter_summary.tex    # GA search space & optimal values
+│       ├── model_comparison.md              # Markdown mirror for README embedding
+│       ├── model_comparison.json            # Raw numeric data (mean ± std)
+│       ├── model_comparison.csv             # CSV export for external tools
+│       └── pandemic_xai_report.md           # Clinical XAI disentanglement report
 ├── src/
 │   ├── data_processing/                     # Phase 1: Feature Extraction & Alignment
 │   │   ├── __init__.py                      # Package exports
@@ -159,11 +199,14 @@ early_autism_screening/
 │   │   ├── ga_chromosome.py                 # Hybrid chromosome encoding & CV fitness
 │   │   ├── genetic_algorithm.py             # GeneticAlgorithmEngine (LHS, SBX, Elitism)
 │   │   └── run_ga.py                        # GA optimization entry point & retraining
-│   └── explainability/                      # Phase 3: Explainable AI & Pandemic Context
+│   ├── explainability/                      # Phase 3: Explainable AI & Pandemic Context
+│   │   ├── __init__.py                      # Package exports
+│   │   ├── shap_explainer.py                # MultimodalSHAPExplainer (KernelExplainer)
+│   │   ├── lime_explainer.py                # MultimodalLIMEExplainer (TabularExplainer)
+│   │   └── pandemic_context.py              # PandemicContextAnalyzer (Landmark Heatmaps & XAI)
+│   └── evaluation/                          # Phase 4: Results Compilation & Paper Assets
 │       ├── __init__.py                      # Package exports
-│       ├── shap_explainer.py                # MultimodalSHAPExplainer (KernelExplainer)
-│       ├── lime_explainer.py                # MultimodalLIMEExplainer (TabularExplainer)
-│       └── pandemic_context.py              # PandemicContextAnalyzer (Landmark Heatmaps & XAI)
+│       └── generate_results.py              # ResultsCompiler (Figures, Tables, LaTeX export)
 ├── tests/
 │   ├── check_phase2.py                      # Phase 2 integration audit script
 │   ├── check_fusion.py                      # Phase 2 multimodal late fusion audit script
@@ -179,7 +222,7 @@ early_autism_screening/
 
 ---
 
-## 6. Setup & Execution
+## 7. Setup & Execution
 
 ### 1. Environment Setup
 ```powershell
@@ -210,7 +253,13 @@ python src/optimization/run_ga.py --population 20 --generations 30
 python src/optimization/run_ga.py --smoke_test
 ```
 
-### 4. Running the Test Suite (Phases 1, 2, and 3)
+### 4. Running Phase 4 Results Compilation
+```powershell
+# Generate all publication-ready figures and tables
+python src/evaluation/generate_results.py
+```
+
+### 5. Running the Test Suite (Phases 1, 2, and 3)
 ```powershell
 # Phase 1 & 2 Verification
 python tests/test_leakage_free.py
@@ -224,9 +273,19 @@ python tests/test_phase3_ga.py
 python tests/test_phase3_xai.py
 ```
 
+### 6. Compiling the Conference Paper
+```powershell
+# Requires LaTeX distribution (e.g., MiKTeX or TeX Live)
+cd paper
+pdflatex main.tex
+bibtex main
+pdflatex main.tex
+pdflatex main.tex
+```
+
 ---
 
-## 7. Citation & Academic Inquiries
+## 8. Citation & Academic Inquiries
 
 If you find this research codebase useful in your work, please cite:
 
