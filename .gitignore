@@ -67,6 +67,7 @@ ipython_config.py
 # Pretrained Weights, Task Bundles & Model Checkpoints
 # ==============================================================================
 checkpoints/
+*.pt
 *.pth
 *.bin
 *.onnx

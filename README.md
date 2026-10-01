@@ -95,7 +95,30 @@ The dataset provides built-in class imbalance utilities via `compute_pos_weight(
 
 ---
 
-## 4. Repository Structure
+## 4. Phase 3: Algorithmic Optimization & Explainable AI (XAI)
+
+Phase 3 introduces technical novelty required for clinical conference submission, satisfying the imperative to **disentangle pandemic-induced environmental delays from ASD**:
+
+### 1. Genetic Algorithm (GA) Optimization (`src/optimization/`)
+- **Soft Computing Multi-Gene Optimization**: Automatically discovers optimal scalar modality fusion weights $(w_v, w_a, w_t)$, optimizer dynamics (learning rate, weight decay), regularization rates (dropout 1 & 2), and late fusion capacity (`fusion_hidden1`, `fusion_hidden2`).
+- **Operators**: Latin Hypercube Sampling (LHS) initialization, Simulated Binary Crossover (SBX, $\eta_c=20$), Polynomial Mutation ($\eta_m=20$), Tournament Selection ($k=3$), and strict elitism.
+- **Fitness Objective**: Mean Stratified Cross-Validation **Balanced Accuracy** (averaging sensitivity and specificity to counter 83/17 class imbalance).
+
+### 2. Model-Agnostic Explainability (`src/explainability/`)
+- **SHAP (KernelExplainer)**: Computes additive feature attributions over the 320D multimodal fused feature space, aggregating importance across Vision, Audio, and Text streams.
+- **LIME (TabularExplainer)**: Produces local linear surrogate decision rules and contrastive explanations comparing ASD vs. Control clinical profiles.
+
+### 3. Pandemic Context Module (`src/explainability/pandemic_context.py`)
+- **Clinical Feature Taxonomy**: Partitions the 320D multimodal latent space into:
+  - *Pandemic-Sensitive Environmental Markers*: Lower-face affect (mask-wearing), acoustic volume/energy (lockdown isolation), and conversational expressive vocabulary.
+  - *Intrinsic Neurodevelopmental ASD Markers*: Atypical joint attention gaze shifts, stereotypic vocal cadence, and repetitive behavioral patterns.
+- **Visual Landmark Heatmaps**: Extracts frame-by-frame temporal attention pooling weights and renders dynamic 3D facial landmark saliency heatmaps across video sequences.
+- **Acoustic Spectrogram Attribution**: Overlays frequency-temporal attribution maps onto 40x313 MFCC matrices.
+- **Pandemic Disentanglement Scatter Plot**: Quantifies $S_{\text{pandemic}}$ vs. $S_{\text{asd}}$ attribution ratios, flagging patients whose positive screening was confounded by pandemic environmental isolation for clinical developmental re-evaluation.
+
+---
+
+## 5. Repository Structure
 
 ```
 early_autism_screening/
@@ -110,27 +133,45 @@ early_autism_screening/
 │       ├── audio_features/                  # Standardized 40x313 MFCC matrices (171 files)
 │       ├── text_embeddings/                 # Leak-free DistilBERT embeddings (171 files)
 │       └── mchat_standalone/                # Standalone M-CHAT cohort (6,075 records)
-├── models/                                  # Pre-trained models and detector assets
+├── models/
+│   ├── ga_checkpoints/                      # GA population checkpoints & final model
+│   └── ga_logs/                             # Evolution CSV logs & convergence plots
 ├── notebooks/                               # Exploratory analysis notebooks
 ├── src/
-│   ├── data_processing/
+│   ├── data_processing/                     # Phase 1: Feature Extraction & Alignment
 │   │   ├── __init__.py                      # Package exports
 │   │   ├── extract_video_landmarks.py       # MediaPipe 3D face mesh extractor
 │   │   ├── extract_audio_features.py        # Librosa 16kHz MFCC extractor
 │   │   ├── extract_text_embeddings.py       # Standalone M-CHAT text pipeline
 │   │   ├── generate_video_text_embeddings.py# Leak-free video text narrative generator
 │   │   └── multimodal_dataset.py            # Dual-mode PyTorch Multimodal Dataset
-│   └── models/
+│   ├── models/                              # Phase 2: Unimodal Encoders & Late Fusion
+│   │   ├── __init__.py                      # Package exports
+│   │   ├── vision_model.py                  # VisionLandmarkModel (BiLSTM + Attention + Mask)
+│   │   ├── audio_model.py                   # AcousticCNNModel (3-stage 2D CNN)
+│   │   ├── text_model.py                    # ClinicalTextMLP (LayerNorm MLP)
+│   │   └── fusion_model.py                  # MultimodalAutismClassifier (Dual-mode Late Fusion)
+│   ├── training/                            # Phase 3: Cross-Validation & Training
+│   │   ├── __init__.py                      # Package exports
+│   │   └── trainer.py                       # AutismScreeningTrainer (Stratified K-Fold CV)
+│   ├── optimization/                        # Phase 3: Soft Computing & GA Optimization
+│   │   ├── __init__.py                      # Package exports
+│   │   ├── ga_chromosome.py                 # Hybrid chromosome encoding & CV fitness
+│   │   ├── genetic_algorithm.py             # GeneticAlgorithmEngine (LHS, SBX, Elitism)
+│   │   └── run_ga.py                        # GA optimization entry point & retraining
+│   └── explainability/                      # Phase 3: Explainable AI & Pandemic Context
 │       ├── __init__.py                      # Package exports
-│       ├── vision_model.py                  # VisionLandmarkModel (BiLSTM + Attention + Mask)
-│       ├── audio_model.py                   # AcousticCNNModel (3-stage 2D CNN)
-│       ├── text_model.py                    # ClinicalTextMLP (LayerNorm MLP)
-│       └── fusion_model.py                  # MultimodalAutismClassifier (Dual-mode Late Fusion)
+│       ├── shap_explainer.py                # MultimodalSHAPExplainer (KernelExplainer)
+│       ├── lime_explainer.py                # MultimodalLIMEExplainer (TabularExplainer)
+│       └── pandemic_context.py              # PandemicContextAnalyzer (Landmark Heatmaps & XAI)
 ├── tests/
-│   ├── check_phase2.py                      # Integration audit script
-│   ├── check_fusion.py                      # Multimodal late fusion audit script
-│   ├── check_subnetwork.py                  # Unimodal branch verification audit
-│   └── test_leakage_free.py                 # Automated text leakage test suite
+│   ├── check_phase2.py                      # Phase 2 integration audit script
+│   ├── check_fusion.py                      # Phase 2 multimodal late fusion audit script
+│   ├── check_subnetwork.py                  # Phase 2 unimodal branch audit script
+│   ├── test_leakage_free.py                 # Text leakage verification test suite
+│   ├── test_phase3_training.py              # Phase 3 training & cross-validation tests
+│   ├── test_phase3_ga.py                    # Phase 3 Genetic Algorithm unit & operator tests
+│   └── test_phase3_xai.py                   # Phase 3 SHAP, LIME, and Pandemic Context tests
 ├── pyproject.toml                           # Package configuration (pip install -e .)
 ├── requirements.txt                         # Python dependencies
 └── README.md                                # Project documentation
@@ -138,7 +179,7 @@ early_autism_screening/
 
 ---
 
-## 5. Setup & Installation
+## 6. Setup & Execution
 
 ### 1. Environment Setup
 ```powershell
@@ -158,17 +199,34 @@ python src/data_processing/generate_video_text_embeddings.py
 
 # Verify multimodal dataset alignment & temporal attention padding masks
 python src/data_processing/multimodal_dataset.py
+```
 
-# Run the complete test suite
+### 3. Running Phase 3 Genetic Algorithm & Retraining
+```powershell
+# Run full GA optimization (population=20, generations=30)
+python src/optimization/run_ga.py --population 20 --generations 30
+
+# Fast smoke-test verification
+python src/optimization/run_ga.py --smoke_test
+```
+
+### 4. Running the Test Suite (Phases 1, 2, and 3)
+```powershell
+# Phase 1 & 2 Verification
 python tests/test_leakage_free.py
 python tests/check_subnetwork.py
 python tests/check_fusion.py
 python tests/check_phase2.py
+
+# Phase 3 Verification
+python tests/test_phase3_training.py
+python tests/test_phase3_ga.py
+python tests/test_phase3_xai.py
 ```
 
 ---
 
-## 6. Citation & Academic Inquiries
+## 7. Citation & Academic Inquiries
 
 If you find this research codebase useful in your work, please cite:
 
